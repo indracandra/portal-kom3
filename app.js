@@ -1,8 +1,7 @@
-/* ==================================================
+/* =========================================================
    PORTAL KOM 3
-   FRONTEND GITHUB + APPS SCRIPT API
-================================================== */
-
+   FRONTEND OPERASIONAL V1.1
+========================================================= */
 
 const APP_CONFIG = {
 
@@ -20,68 +19,33 @@ let sessionToken =
   ) || "";
 
 
-/* ==================================================
- API REQUEST
-================================================== */
-
+/* =========================================================
+   API
+========================================================= */
 
 async function apiRequest(
   action,
   payload = {}
 ) {
 
-  if (
-    !APP_CONFIG.apiUrl
-    ||
-    APP_CONFIG.apiUrl.indexOf(
-      "PASTE_URL"
-    ) >= 0
-  ) {
-
-    throw new Error(
-      "URL Apps Script belum dimasukkan di app.js."
-    );
-
-  }
-
-
-  const body = {
-
-    action:
-      action,
-
-    ...payload
-
-  };
-
-
   const response =
     await fetch(
-
       APP_CONFIG.apiUrl,
-
       {
-
-        method:
-          "POST",
-
-        redirect:
-          "follow",
+        method: "POST",
+        redirect: "follow",
 
         headers: {
-
           "Content-Type":
             "text/plain;charset=utf-8"
-
         },
 
         body:
-          JSON.stringify(
-            body
-          )
-
+          JSON.stringify({
+            action: action,
+            ...payload
+          })
       }
-
     );
 
 
@@ -102,7 +66,7 @@ async function apiRequest(
     console.log(text);
 
     throw new Error(
-      "Response server tidak valid."
+      "Server tidak memberikan response yang valid."
     );
 
   }
@@ -110,10 +74,9 @@ async function apiRequest(
 }
 
 
-/* ==================================================
- PAGE
-================================================== */
-
+/* =========================================================
+   PAGE
+========================================================= */
 
 function hideAllPages() {
 
@@ -123,7 +86,6 @@ function hideAllPages() {
     "dashboardPage"
   ]
   .forEach(
-
     id => {
 
       const el =
@@ -131,17 +93,13 @@ function hideAllPages() {
           id
         );
 
-
       if (el) {
-
         el.classList.add(
           "hidden"
         );
-
       }
 
     }
-
   );
 
 }
@@ -151,7 +109,6 @@ function showLogin() {
 
   hideAllPages();
 
-
   document
     .getElementById(
       "loginPage"
@@ -160,7 +117,6 @@ function showLogin() {
     .remove(
       "hidden"
     );
-
 
   window.scrollTo(
     0,
@@ -174,7 +130,6 @@ function showRegister() {
 
   hideAllPages();
 
-
   document
     .getElementById(
       "registerPage"
@@ -183,7 +138,6 @@ function showRegister() {
     .remove(
       "hidden"
     );
-
 
   window.scrollTo(
     0,
@@ -197,7 +151,6 @@ function showDashboard() {
 
   hideAllPages();
 
-
   document
     .getElementById(
       "dashboardPage"
@@ -207,7 +160,6 @@ function showDashboard() {
       "hidden"
     );
 
-
   window.scrollTo(
     0,
     0
@@ -216,10 +168,9 @@ function showDashboard() {
 }
 
 
-/* ==================================================
- PASSWORD
-================================================== */
-
+/* =========================================================
+   PASSWORD
+========================================================= */
 
 function togglePassword() {
 
@@ -228,19 +179,17 @@ function togglePassword() {
       "loginPassword"
     );
 
-
   input.type =
     input.type === "password"
-    ? "text"
-    : "password";
+      ? "text"
+      : "password";
 
 }
 
 
-/* ==================================================
- LOGIN
-================================================== */
-
+/* =========================================================
+   LOGIN
+========================================================= */
 
 async function handleLogin(
   event
@@ -250,12 +199,9 @@ async function handleLogin(
 
 
   const user =
-    document
-      .getElementById(
-        "loginUser"
-      )
-      .value
-      .trim();
+    valueOf(
+      "loginUser"
+    );
 
 
   const password =
@@ -272,7 +218,7 @@ async function handleLogin(
   ) {
 
     showToast(
-      "Silakan isi username/email dan password."
+      "Isi username/email dan password."
     );
 
     return;
@@ -289,19 +235,11 @@ async function handleLogin(
 
     const res =
       await apiRequest(
-
         "login",
-
         {
-
-          user:
-            user,
-
-          password:
-            password
-
+          user: user,
+          password: password
         }
-
       );
 
 
@@ -310,8 +248,7 @@ async function handleLogin(
     ) {
 
       showToast(
-        res.message ||
-        "Login gagal."
+        res.message
       );
 
       return;
@@ -328,22 +265,16 @@ async function handleLogin(
 
 
     localStorage.setItem(
-
       "kom3_token",
-
       sessionToken
-
     );
 
 
     localStorage.setItem(
-
       "kom3_user",
-
       JSON.stringify(
         currentUser
       )
-
     );
 
 
@@ -359,6 +290,12 @@ async function handleLogin(
       "."
     );
 
+
+    setTimeout(
+      setupRoleInterface,
+      100
+    );
+
   }
 
   catch (err) {
@@ -372,10 +309,9 @@ async function handleLogin(
 }
 
 
-/* ==================================================
- REGISTER
-================================================== */
-
+/* =========================================================
+   REGISTER
+========================================================= */
 
 async function handleRegister(
   event
@@ -389,36 +325,30 @@ async function handleRegister(
       "regName"
     );
 
-
   const nip =
     valueOf(
       "regNip"
     );
-
 
   const sekolah =
     valueOf(
       "regSchool"
     );
 
-
   const email =
     valueOf(
       "regEmail"
     );
-
 
   const wa =
     valueOf(
       "regWa"
     );
 
-
   const username =
     valueOf(
       "regUsername"
     );
-
 
   const password =
     document
@@ -426,7 +356,6 @@ async function handleRegister(
         "regPassword"
       )
       .value;
-
 
   const password2 =
     document
@@ -437,13 +366,11 @@ async function handleRegister(
 
 
   if (
-
     !nama ||
     !sekolah ||
     !email ||
     !username ||
     !password
-
   ) {
 
     showToast(
@@ -456,20 +383,8 @@ async function handleRegister(
 
 
   if (
-    password.length < 6
-  ) {
-
-    showToast(
-      "Password minimal 6 karakter."
-    );
-
-    return;
-
-  }
-
-
-  if (
-    password !== password2
+    password !==
+    password2
   ) {
 
     showToast(
@@ -490,34 +405,16 @@ async function handleRegister(
 
     const res =
       await apiRequest(
-
         "register",
-
         {
-
-          nama:
-            nama,
-
-          nip:
-            nip,
-
-          sekolah:
-            sekolah,
-
-          email:
-            email,
-
-          wa:
-            wa,
-
-          username:
-            username,
-
-          password:
-            password
-
+          nama,
+          nip,
+          sekolah,
+          email,
+          wa,
+          username,
+          password
         }
-
       );
 
 
@@ -538,11 +435,8 @@ async function handleRegister(
 
 
       setTimeout(
-
         showLogin,
-
         1200
-
       );
 
     }
@@ -560,162 +454,101 @@ async function handleRegister(
 }
 
 
-/* ==================================================
- DASHBOARD
-================================================== */
-
+/* =========================================================
+   DASHBOARD
+========================================================= */
 
 async function loadDashboard() {
 
+  const res =
+    await apiRequest(
+      "dashboard",
+      {
+        token:
+          sessionToken
+      }
+    );
+
+
   if (
-    !sessionToken
+    !res.success
   ) {
+
+    if (
+      res.sessionExpired
+    ) {
+
+      forceLogout();
+
+    }
 
     return;
 
   }
 
 
-  try {
-
-    const res =
-      await apiRequest(
-
-        "dashboard",
-
-        {
-
-          token:
-            sessionToken
-
-        }
-
-      );
+  currentUser =
+    res.user;
 
 
-    if (
-      !res.success
-    ) {
+  updateProfileDisplay(
+    res.user
+  );
 
 
-      if (
-        res.sessionExpired
-      ) {
-
-        forceLogout();
-
-      }
+  updateStats(
+    res.stats
+  );
 
 
-      return;
-
-    }
-
-
-    currentUser =
-      res.user;
+  updateAgenda(
+    res.agenda
+  );
 
 
-    updateProfileDisplay(
-      res.user
-    );
-
-
-    updateStats(
-      res.stats
-    );
-
-
-    updateAgenda(
-      res.agenda
-    );
-
-
-    updateAnnouncements(
-      res.pengumuman
-    );
-
-  }
-
-  catch (err) {
-
-    console.error(
-      err
-    );
-
-  }
+  updateAnnouncements(
+    res.pengumuman
+  );
 
 }
 
 
-/* ==================================================
- PROFILE DISPLAY
-================================================== */
-
+/* =========================================================
+   PROFILE
+========================================================= */
 
 function updateProfileDisplay(
   user
 ) {
 
-  const name =
-    document.getElementById(
-      "dashboardName"
-    );
+  setText(
+    "dashboardName",
+    user.nama
+  );
+
+  setText(
+    "dashboardSchool",
+    user.sekolah
+  );
+
+  setText(
+    "dashboardRole",
+    String(
+      user.role
+    )
+    .toUpperCase()
+  );
 
 
-  const school =
-    document.getElementById(
-      "dashboardSchool"
-    );
-
-
-  const role =
-    document.getElementById(
-      "dashboardRole"
-    );
-
-
-  if (name) {
-
-    name.textContent =
-      user.nama;
-
-  }
-
-
-  if (school) {
-
-    school.textContent =
-      user.sekolah;
-
-  }
-
-
-  if (role) {
-
-    role.textContent =
-      String(
-        user.role
-      )
-      .toUpperCase();
-
-  }
-
-
-  /*
-   MEMBER ID
-  */
-
-
-  const memberIdEl =
+  const member =
     document.querySelector(
       ".member-id strong"
     );
 
 
-  if (memberIdEl) {
+  if (member) {
 
-    memberIdEl.textContent =
+    member.textContent =
       user.id;
 
   }
@@ -723,270 +556,1068 @@ function updateProfileDisplay(
 }
 
 
-/* ==================================================
- STATS
-================================================== */
-
+/* =========================================================
+   STATS
+========================================================= */
 
 function updateStats(
   stats
 ) {
 
-  /*
-   Untuk versi awal,
-   kartu visual masih menggunakan
-   struktur HTML yang sudah ada.
-
-   Data real poin/absensi akan kita
-   aktifkan pada tahap berikutnya.
-  */
-
-
-  const pointEl =
+  const point =
     document.querySelector(
       ".points-value strong"
     );
 
 
-  if (pointEl) {
+  if (point) {
 
-    pointEl.textContent =
+    point.textContent =
       stats.points || 0;
 
   }
 
-}
 
-
-/* ==================================================
- AGENDA
-================================================== */
-
-
-function updateAgenda(
-  agenda
-) {
-
-  const card =
-    document.querySelector(
-      ".agenda-card"
+  const statValues =
+    document.querySelectorAll(
+      ".mini-stat strong"
     );
 
 
   if (
-    !card
+    statValues[0]
   ) {
 
-    return;
+    statValues[0].textContent =
+      stats.attendance ||
+      "0 / 0";
 
   }
 
 
   if (
-    !agenda
+    statValues[1]
   ) {
 
-    card.innerHTML = `
+    statValues[1].textContent =
+      stats.certificates || 0;
 
-      <div style="
-        grid-column:1/-1;
-        padding:12px;
+  }
+
+
+  if (
+    statValues[2]
+  ) {
+
+    statValues[2].textContent =
+      (
+        stats.streak || 0
+      ) + "x";
+
+  }
+
+
+  if (
+    statValues[3]
+  ) {
+
+    statValues[3].textContent =
+      stats.kas ||
+      "Belum ada";
+
+  }
+
+}
+
+
+/* =========================================================
+   ROLE INTERFACE
+========================================================= */
+
+function setupRoleInterface() {
+
+  /*
+   Tombol lonceng:
+   Admin/Pengurus = User Center
+  */
+
+
+  const notif =
+    document.querySelector(
+      ".notification-button"
+    );
+
+
+  if (notif) {
+
+    notif.onclick =
+      function() {
+
+        if (
+          currentUser &&
+          (
+            currentUser.role ===
+              "Admin"
+            ||
+            currentUser.role ===
+              "Pengurus"
+          )
+        ) {
+
+          openUserCenter();
+
+        }
+
+        else {
+
+          showToast(
+            "Tidak ada notifikasi baru."
+          );
+
+        }
+
+      };
+
+  }
+
+}
+
+
+/* =========================================================
+   USER CENTER
+========================================================= */
+
+async function openUserCenter() {
+
+  showLoadingModal(
+    "Manajemen Anggota"
+  );
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "listUsers",
+        {
+          token:
+            sessionToken
+        }
+      );
+
+
+    if (
+      !res.success
+    ) {
+
+      showToast(
+        res.message
+      );
+
+      closeModal();
+
+      return;
+
+    }
+
+
+    let html = `
+
+      <div class="modal-handle"></div>
+
+      <button
+        class="modal-close"
+        onclick="closeModal()"
+      >
+        ×
+      </button>
+
+      <h3>
+        Manajemen Anggota
+      </h3>
+
+      <p style="
         color:#708095;
         font-size:12px;
+        margin-bottom:15px;
       ">
-
-        Belum ada agenda aktif.
-
-      </div>
+        Aktifkan akun baru dan
+        kelola pengurus.
+      </p>
 
     `;
 
-    return;
 
-  }
+    res.users.forEach(
+      user => {
 
+        html += `
 
-  const parts =
-    agenda.tanggal
-      .split(" ");
+          <div style="
+            padding:12px;
+            margin-bottom:10px;
+            background:#f5f8fb;
+            border-radius:14px;
+            text-align:left;
+          ">
 
+            <strong>
+              ${escapeHtml(user.nama)}
+            </strong>
 
-  const tanggal =
-    parts[0] || "-";
+            <div style="
+              font-size:11px;
+              color:#708095;
+              margin-top:3px;
+            ">
+              ${escapeHtml(user.sekolah)}
+              <br>
+              ${escapeHtml(user.id)}
+            </div>
 
+            <div style="
+              margin-top:8px;
+              font-size:11px;
+            ">
 
-  const bulan =
-    (
-      parts[1] ||
-      ""
-    )
-    .substring(
-      0,
-      3
-    )
-    .toUpperCase();
+              Status:
+              <b>
+                ${escapeHtml(user.status)}
+              </b>
 
+              &nbsp; | &nbsp;
 
-  card.innerHTML = `
+              Role:
+              <b>
+                ${escapeHtml(user.role)}
+              </b>
 
-    <div class="agenda-date">
+            </div>
 
-      <strong>
-        ${escapeHtml(tanggal)}
-      </strong>
-
-      <span>
-        ${escapeHtml(bulan)}
-      </span>
-
-    </div>
-
-
-    <div class="agenda-info">
-
-      <div class="agenda-badge">
-        ${escapeHtml(agenda.moda)}
-      </div>
-
-      <h4>
-        ${escapeHtml(agenda.nama)}
-      </h4>
-
-      <p>
-        📍 ${escapeHtml(agenda.lokasi)}
-      </p>
-
-      <p>
-        🕐 ${escapeHtml(agenda.jam)}
-      </p>
-
-    </div>
+        `;
 
 
-    <button
-      class="agenda-arrow"
-      onclick="openFeature('Agenda MGMP')"
-    >
-      ›
-    </button>
+        if (
+          user.status ===
+          "PENDING"
+        ) {
 
-  `;
+          html += `
 
-}
+            <button
+              type="button"
+              class="primary-button"
+              style="
+                margin-top:10px;
+                min-height:40px;
+              "
+              onclick="approveMember(
+                '${user.id}'
+              )"
+            >
+              ✓ Aktifkan Anggota
+            </button>
+
+          `;
+
+        }
 
 
-/* ==================================================
- PENGUMUMAN
-================================================== */
+        if (
+          currentUser.role ===
+          "Admin"
+        ) {
+
+          html += `
+
+            <div style="
+              display:grid;
+              grid-template-columns:
+                1fr 1fr;
+              gap:6px;
+              margin-top:8px;
+            ">
+
+              <select
+                id="role-${user.id}"
+                style="
+                  min-height:40px;
+                  border:1px solid #dce4ec;
+                  border-radius:10px;
+                  padding:6px;
+                "
+              >
+
+                <option
+                  value="Anggota"
+                  ${user.role === "Anggota"
+                    ? "selected"
+                    : ""}
+                >
+                  Anggota
+                </option>
+
+                <option
+                  value="Pengurus"
+                  ${user.role === "Pengurus"
+                    ? "selected"
+                    : ""}
+                >
+                  Pengurus
+                </option>
+
+              </select>
 
 
-function updateAnnouncements(
-  list
-) {
+              <select
+                id="jabatan-${user.id}"
+                style="
+                  min-height:40px;
+                  border:1px solid #dce4ec;
+                  border-radius:10px;
+                  padding:6px;
+                "
+              >
 
-  const card =
-    document.querySelector(
-      ".announcement-card"
+                ${jabatanOptions(
+                  user.jabatan
+                )}
+
+              </select>
+
+            </div>
+
+
+            <button
+              type="button"
+              class="secondary-button"
+              style="
+                min-height:40px;
+                margin-top:6px;
+              "
+              onclick="saveUserRole(
+                '${user.id}'
+              )"
+            >
+              Simpan Role & Jabatan
+            </button>
+
+          `;
+
+        }
+
+
+        html += `
+          </div>
+        `;
+
+      }
     );
 
 
-  if (!card) {
+    html += `
 
-    return;
-
-  }
-
-
-  if (
-    !list ||
-    list.length === 0
-  ) {
-
-    card.innerHTML = `
-
-      <div class="announcement-icon">
-        📢
-      </div>
-
-      <div>
-
-        <h4>
-          Belum ada pengumuman
-        </h4>
-
-        <p>
-          Informasi terbaru MGMP
-          akan muncul di sini.
-        </p>
-
-      </div>
+      <button
+        class="secondary-button"
+        onclick="closeModal()"
+      >
+        Tutup
+      </button>
 
     `;
 
-    return;
+
+    setModalHtml(
+      html
+    );
 
   }
 
+  catch (err) {
 
-  const item =
-    list[0];
+    showToast(
+      err.message
+    );
 
+    closeModal();
 
-  card.innerHTML = `
-
-    <div class="announcement-icon">
-      📢
-    </div>
-
-    <div>
-
-      <div class="announcement-label">
-
-        ${escapeHtml(
-          item.kategori ||
-          "UMUM"
-        )}
-
-      </div>
-
-      <h4>
-
-        ${escapeHtml(
-          item.judul
-        )}
-
-      </h4>
-
-      <p>
-
-        ${escapeHtml(
-          item.isi
-        )}
-
-      </p>
-
-    </div>
-
-  `;
+  }
 
 }
 
 
-/* ==================================================
- FEATURE
-================================================== */
+function jabatanOptions(
+  selected
+) {
+
+  const list = [
+
+    "Anggota",
+    "Ketua",
+    "Sekretaris",
+    "Bendahara",
+    "Bidang"
+
+  ];
 
 
-function openFeature(
+  return list
+    .map(
+      x => `
+
+        <option
+          value="${x}"
+          ${x === selected
+            ? "selected"
+            : ""}
+        >
+          ${x}
+        </option>
+
+      `
+    )
+    .join("");
+
+}
+
+
+/* =========================================================
+   APPROVE MEMBER
+========================================================= */
+
+async function approveMember(
+  id
+) {
+
+  const res =
+    await apiRequest(
+      "approveUser",
+      {
+        token:
+          sessionToken,
+
+        userId:
+          id
+      }
+    );
+
+
+  showToast(
+    res.message
+  );
+
+
+  if (
+    res.success
+  ) {
+
+    openUserCenter();
+
+  }
+
+}
+
+
+/* =========================================================
+   ROLE
+========================================================= */
+
+async function saveUserRole(
+  userId
+) {
+
+  const role =
+    document
+      .getElementById(
+        "role-" +
+        userId
+      )
+      .value;
+
+
+  const jabatan =
+    document
+      .getElementById(
+        "jabatan-" +
+        userId
+      )
+      .value;
+
+
+  const res =
+    await apiRequest(
+      "updateUserAccess",
+      {
+        token:
+          sessionToken,
+
+        userId:
+          userId,
+
+        role:
+          role,
+
+        jabatan:
+          jabatan
+      }
+    );
+
+
+  showToast(
+    res.message
+  );
+
+
+  if (
+    res.success
+  ) {
+
+    openUserCenter();
+
+  }
+
+}
+
+
+/* =========================================================
+   FEATURE
+========================================================= */
+
+async function openFeature(
   name
 ) {
+
+  /*
+   KEHADIRAN
+  */
+
+  if (
+    name ===
+    "Kehadiran Saya"
+    ||
+    name ===
+    "Kehadiran"
+  ) {
+
+    if (
+      currentUser.role ===
+        "Admin"
+      ||
+      currentUser.role ===
+        "Pengurus"
+    ) {
+
+      await openAttendanceManager();
+
+    }
+
+    else {
+
+      await openMyAttendance();
+
+    }
+
+    return;
+
+  }
+
 
   document
     .getElementById(
       "modalTitle"
     )
     .textContent =
-    name;
+      name;
+
+
+  document
+    .getElementById(
+      "featureModal"
+    )
+    .classList
+    .remove(
+      "hidden"
+    );
+
+}
+
+
+/* =========================================================
+   ABSENSI MANAGER
+========================================================= */
+
+async function openAttendanceManager() {
+
+  showLoadingModal(
+    "Absensi Pertemuan"
+  );
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "attendanceManager",
+        {
+          token:
+            sessionToken
+        }
+      );
+
+
+    if (
+      !res.success
+    ) {
+
+      showToast(
+        res.message
+      );
+
+      closeModal();
+
+      return;
+
+    }
+
+
+    let html = `
+
+      <div class="modal-handle"></div>
+
+      <button
+        class="modal-close"
+        onclick="closeModal()"
+      >
+        ×
+      </button>
+
+      <h3>
+        Absensi Pertemuan
+      </h3>
+
+      <p style="
+        color:#708095;
+        font-size:11px;
+        line-height:1.5;
+      ">
+
+        <b>
+          ${escapeHtml(
+            res.agenda.nama
+          )}
+        </b>
+
+        <br>
+
+        ${escapeHtml(
+          res.agenda.tanggal
+        )}
+
+        •
+
+        ${escapeHtml(
+          res.agenda.jam
+        )}
+
+      </p>
+
+      <div style="
+        margin-top:14px;
+        max-height:55vh;
+        overflow:auto;
+      ">
+
+    `;
+
+
+    res.users.forEach(
+      user => {
+
+        const sudah =
+          user.statusAbsen ===
+          "HADIR";
+
+
+        html += `
+
+          <div style="
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:10px;
+            padding:10px;
+            margin-bottom:8px;
+            background:#f5f8fb;
+            border-radius:12px;
+            text-align:left;
+          ">
+
+            <div style="
+              min-width:0;
+            ">
+
+              <strong style="
+                font-size:12px;
+              ">
+                ${escapeHtml(
+                  user.nama
+                )}
+              </strong>
+
+              <div style="
+                font-size:10px;
+                color:#708095;
+                margin-top:3px;
+              ">
+                ${escapeHtml(
+                  user.sekolah
+                )}
+              </div>
+
+            </div>
+
+
+            ${
+              sudah
+
+              ? `
+
+                <span style="
+                  padding:7px 9px;
+                  color:#12805c;
+                  background:#e3f7ef;
+                  border-radius:10px;
+                  font-size:10px;
+                  font-weight:800;
+                ">
+                  ✓ HADIR
+                </span>
+
+              `
+
+              : `
+
+                <button
+                  type="button"
+                  onclick="
+                    markPresent(
+                      '${user.id}'
+                    )
+                  "
+                  style="
+                    border:0;
+                    padding:8px 10px;
+                    color:white;
+                    background:#14538a;
+                    border-radius:10px;
+                    font-size:10px;
+                    font-weight:800;
+                  "
+                >
+                  HADIR
+                </button>
+
+              `
+            }
+
+          </div>
+
+        `;
+
+      }
+    );
+
+
+    html += `
+
+      </div>
+
+      <button
+        class="secondary-button"
+        onclick="closeModal()"
+      >
+        Selesai
+      </button>
+
+    `;
+
+
+    setModalHtml(
+      html
+    );
+
+  }
+
+  catch (err) {
+
+    showToast(
+      err.message
+    );
+
+    closeModal();
+
+  }
+
+}
+
+
+/* =========================================================
+   MARK PRESENT
+========================================================= */
+
+async function markPresent(
+  userId
+) {
+
+  showToast(
+    "Menyimpan kehadiran..."
+  );
+
+
+  const res =
+    await apiRequest(
+      "markAttendance",
+      {
+        token:
+          sessionToken,
+
+        userId:
+          userId
+      }
+    );
+
+
+  showToast(
+    res.message
+  );
+
+
+  if (
+    res.success
+  ) {
+
+    await openAttendanceManager();
+
+    await loadDashboard();
+
+  }
+
+}
+
+
+/* =========================================================
+   MY ATTENDANCE
+========================================================= */
+
+async function openMyAttendance() {
+
+  showLoadingModal(
+    "Kehadiran Saya"
+  );
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "myAttendance",
+        {
+          token:
+            sessionToken
+        }
+      );
+
+
+    if (
+      !res.success
+    ) {
+
+      showToast(
+        res.message
+      );
+
+      closeModal();
+
+      return;
+
+    }
+
+
+    let html = `
+
+      <div class="modal-handle"></div>
+
+      <button
+        class="modal-close"
+        onclick="closeModal()"
+      >
+        ×
+      </button>
+
+      <h3>
+        Kehadiran Saya
+      </h3>
+
+    `;
+
+
+    if (
+      res.history.length === 0
+    ) {
+
+      html += `
+
+        <p style="
+          color:#708095;
+          font-size:12px;
+        ">
+          Belum ada riwayat kehadiran.
+        </p>
+
+      `;
+
+    }
+
+
+    res.history.forEach(
+      item => {
+
+        html += `
+
+          <div style="
+            padding:12px;
+            margin-top:8px;
+            background:#f5f8fb;
+            border-radius:12px;
+            text-align:left;
+          ">
+
+            <strong style="
+              font-size:12px;
+            ">
+              ${escapeHtml(
+                item.agenda
+              )}
+            </strong>
+
+            <div style="
+              color:#708095;
+              font-size:10px;
+              margin-top:4px;
+            ">
+              ${escapeHtml(
+                item.tanggal
+              )}
+
+              •
+
+              ${escapeHtml(
+                item.jam
+              )}
+            </div>
+
+            <div style="
+              margin-top:5px;
+              color:#12805c;
+              font-size:10px;
+              font-weight:900;
+            ">
+              ✓ ${escapeHtml(
+                item.status
+              )}
+            </div>
+
+          </div>
+
+        `;
+
+      }
+    );
+
+
+    html += `
+
+      <button
+        class="secondary-button"
+        onclick="closeModal()"
+      >
+        Tutup
+      </button>
+
+    `;
+
+
+    setModalHtml(
+      html
+    );
+
+  }
+
+  catch (err) {
+
+    showToast(
+      err.message
+    );
+
+    closeModal();
+
+  }
+
+}
+
+
+/* =========================================================
+   MODAL HELPERS
+========================================================= */
+
+function showLoadingModal(
+  title
+) {
+
+  setModalHtml(`
+
+    <div class="modal-handle"></div>
+
+    <button
+      class="modal-close"
+      onclick="closeModal()"
+    >
+      ×
+    </button>
+
+    <div class="modal-icon">
+      ⏳
+    </div>
+
+    <h3>
+      ${escapeHtml(title)}
+    </h3>
+
+    <p>
+      Memuat data...
+    </p>
+
+  `);
+
+}
+
+
+function setModalHtml(
+  html
+) {
+
+  const modal =
+    document.querySelector(
+      "#featureModal .modal-card"
+    );
+
+
+  if (modal) {
+
+    modal.innerHTML =
+      html;
+
+  }
 
 
   document
@@ -1020,8 +1651,8 @@ function closeModalFromOverlay(
 ) {
 
   if (
-    event.target.id
-    === "featureModal"
+    event.target.id ===
+    "featureModal"
   ) {
 
     closeModal();
@@ -1033,17 +1664,230 @@ function closeModalFromOverlay(
 
 function showAllMenu() {
 
-  openFeature(
-    "Semua Menu Portal KOM 3"
-  );
+  if (
+    currentUser &&
+    (
+      currentUser.role ===
+        "Admin"
+      ||
+      currentUser.role ===
+        "Pengurus"
+    )
+  ) {
+
+    openUserCenter();
+
+  }
+
+  else {
+
+    showToast(
+      "Gunakan menu utama pada dashboard."
+    );
+
+  }
 
 }
 
 
-/* ==================================================
- NAV
-================================================== */
+/* =========================================================
+   AGENDA / ANNOUNCEMENT
+========================================================= */
 
+function updateAgenda(
+  agenda
+) {
+
+  const card =
+    document.querySelector(
+      ".agenda-card"
+    );
+
+
+  if (
+    !card
+  ) {
+    return;
+  }
+
+
+  if (!agenda) {
+
+    card.innerHTML = `
+      <div style="
+        grid-column:1/-1;
+        padding:14px;
+        color:#708095;
+      ">
+        Belum ada agenda aktif.
+      </div>
+    `;
+
+    return;
+
+  }
+
+
+  const parts =
+    agenda.tanggal
+      .split(" ");
+
+
+  card.innerHTML = `
+
+    <div class="agenda-date">
+
+      <strong>
+        ${escapeHtml(
+          parts[0] || "-"
+        )}
+      </strong>
+
+      <span>
+        ${escapeHtml(
+          (
+            parts[1] || ""
+          )
+          .substring(
+            0,
+            3
+          )
+          .toUpperCase()
+        )}
+      </span>
+
+    </div>
+
+
+    <div class="agenda-info">
+
+      <div class="agenda-badge">
+        ${escapeHtml(
+          agenda.moda
+        )}
+      </div>
+
+      <h4>
+        ${escapeHtml(
+          agenda.nama
+        )}
+      </h4>
+
+      <p>
+        📍
+        ${escapeHtml(
+          agenda.lokasi
+        )}
+      </p>
+
+      <p>
+        🕐
+        ${escapeHtml(
+          agenda.jam
+        )}
+      </p>
+
+    </div>
+
+
+    <button
+      class="agenda-arrow"
+      onclick="
+        openFeature(
+          'Agenda MGMP'
+        )
+      "
+    >
+      ›
+    </button>
+
+  `;
+
+}
+
+
+function updateAnnouncements(
+  list
+) {
+
+  const card =
+    document.querySelector(
+      ".announcement-card"
+    );
+
+
+  if (!card) {
+    return;
+  }
+
+
+  if (
+    !list ||
+    list.length === 0
+  ) {
+
+    card.innerHTML = `
+
+      <div class="announcement-icon">
+        📢
+      </div>
+
+      <div>
+
+        <h4>
+          Belum ada pengumuman
+        </h4>
+
+      </div>
+
+    `;
+
+    return;
+
+  }
+
+
+  const item =
+    list[0];
+
+
+  card.innerHTML = `
+
+    <div class="announcement-icon">
+      📢
+    </div>
+
+    <div>
+
+      <div class="announcement-label">
+        ${escapeHtml(
+          item.kategori ||
+          "UMUM"
+        )}
+      </div>
+
+      <h4>
+        ${escapeHtml(
+          item.judul
+        )}
+      </h4>
+
+      <p>
+        ${escapeHtml(
+          item.isi
+        )}
+      </p>
+
+    </div>
+
+  `;
+
+}
+
+
+/* =========================================================
+   NAV
+========================================================= */
 
 function setNav(
   element,
@@ -1055,12 +1899,10 @@ function setNav(
       ".nav-item"
     )
     .forEach(
-
       item =>
         item.classList.remove(
           "active"
         )
-
     );
 
 
@@ -1072,45 +1914,54 @@ function setNav(
 
 
   if (
-    name !== "Home"
+    name === "Home"
+  ) {
+    return;
+  }
+
+
+  if (
+    name === "Profil"
   ) {
 
-    openFeature(
-      name
+    showToast(
+      currentUser.nama +
+      " • " +
+      currentUser.role +
+      " • " +
+      (
+        currentUser.jabatan ||
+        ""
+      )
     );
 
+    return;
+
   }
+
+
+  openFeature(
+    name
+  );
 
 }
 
 
-/* ==================================================
- LOGOUT
-================================================== */
-
+/* =========================================================
+   LOGOUT
+========================================================= */
 
 async function logout() {
 
   try {
 
-    if (
-      sessionToken
-    ) {
-
-      await apiRequest(
-
-        "logout",
-
-        {
-
-          token:
-            sessionToken
-
-        }
-
-      );
-
-    }
+    await apiRequest(
+      "logout",
+      {
+        token:
+          sessionToken
+      }
+    );
 
   }
 
@@ -1144,10 +1995,9 @@ function forceLogout() {
 }
 
 
-/* ==================================================
- TOAST
-================================================== */
-
+/* =========================================================
+   TOAST
+========================================================= */
 
 let toastTimer;
 
@@ -1187,30 +2037,22 @@ function showToast(
 
   toastTimer =
     setTimeout(
-
       () => {
-
         toast.classList.add(
           "hidden"
         );
-
       },
-
       3500
-
     );
 
 }
 
 
-/* ==================================================
- HELPERS
-================================================== */
+/* =========================================================
+   HELPERS
+========================================================= */
 
-
-function valueOf(
-  id
-) {
+function valueOf(id) {
 
   return document
     .getElementById(id)
@@ -1220,12 +2062,33 @@ function valueOf(
 }
 
 
-function escapeHtml(
-  text
+function setText(
+  id,
+  value
 ) {
 
+  const el =
+    document.getElementById(
+      id
+    );
+
+
+  if (el) {
+
+    el.textContent =
+      value || "";
+
+  }
+
+}
+
+
+function escapeHtml(text) {
+
   return String(
-    text ?? ""
+    text == null
+      ? ""
+      : text
   )
 
   .replaceAll(
@@ -1256,57 +2119,42 @@ function escapeHtml(
 }
 
 
-/* ==================================================
- START APP
-================================================== */
-
+/* =========================================================
+   START
+========================================================= */
 
 document.addEventListener(
-
   "DOMContentLoaded",
-
   async () => {
-
 
     if (
       sessionToken
     ) {
 
+      try {
 
-      const stored =
-        localStorage.getItem(
-          "kom3_user"
-        );
+        await loadDashboard();
 
+        if (
+          currentUser
+        ) {
 
-      if (
-        stored
-      ) {
+          showDashboard();
 
-        try {
+          setTimeout(
+            setupRoleInterface,
+            100
+          );
 
-          currentUser =
-            JSON.parse(
-              stored
-            );
+          return;
 
         }
 
-        catch (e) {}
-
       }
 
+      catch (e) {
 
-      await loadDashboard();
-
-
-      if (
-        currentUser
-      ) {
-
-        showDashboard();
-
-        return;
+        console.log(e);
 
       }
 
@@ -1316,5 +2164,4 @@ document.addEventListener(
     showLogin();
 
   }
-
 );
