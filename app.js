@@ -4,7 +4,7 @@
 
 const APP_CONFIG = {
   apiUrl:
-    "https://script.google.com/macros/library/d/1sg7fLd7QlVt0eKacyng6Zj4IODCs7bWEqtRVG2kwrc4VGt5uNjYVDNRu/5",
+    "https://script.google.com/macros/s/AKfycbzAZZn-ZT12OhGoAkULfvS_gtP29fUSvrrEME6xNJXaY2Wn9UFtBQLwOLC6pw1cusHLug/exec",
 
   maxProofBytes:
     2 * 1024 * 1024
