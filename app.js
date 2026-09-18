@@ -1,13 +1,13 @@
 /* =========================================================
-   PORTAL KOM 3
-   FRONTEND OPERASIONAL V1.1
+   PORTAL KOM 3 - FRONTEND V1.2
 ========================================================= */
 
 const APP_CONFIG = {
-
   apiUrl:
-    "https://script.google.com/macros/s/AKfycbzAZZn-ZT12OhGoAkULfvS_gtP29fUSvrrEME6xNJXaY2Wn9UFtBQLwOLC6pw1cusHLug/exec"
+    "https://script.google.com/macros/library/d/1sg7fLd7QlVt0eKacyng6Zj4IODCs7bWEqtRVG2kwrc4VGt5uNjYVDNRu/5",
 
+  maxProofBytes:
+    2 * 1024 * 1024
 };
 
 
@@ -17,6 +17,8 @@ let sessionToken =
   localStorage.getItem(
     "kom3_token"
   ) || "";
+
+let toastTimer = null;
 
 
 /* =========================================================
@@ -28,12 +30,29 @@ async function apiRequest(
   payload = {}
 ) {
 
+  if (
+    !APP_CONFIG.apiUrl
+    ||
+    APP_CONFIG.apiUrl.includes(
+      "PASTE_URL_APPS_SCRIPT"
+    )
+  ) {
+
+    throw new Error(
+      "URL Apps Script belum dimasukkan pada app.js."
+    );
+  }
+
+
   const response =
     await fetch(
       APP_CONFIG.apiUrl,
       {
-        method: "POST",
-        redirect: "follow",
+        method:
+          "POST",
+
+        redirect:
+          "follow",
 
         headers: {
           "Content-Type":
@@ -42,7 +61,7 @@ async function apiRequest(
 
         body:
           JSON.stringify({
-            action: action,
+            action,
             ...payload
           })
       }
@@ -59,18 +78,17 @@ async function apiRequest(
       text
     );
 
-  }
+  } catch (e) {
 
-  catch (e) {
-
-    console.log(text);
+    console.error(
+      "Server response:",
+      text
+    );
 
     throw new Error(
       "Server tidak memberikan response yang valid."
     );
-
   }
-
 }
 
 
@@ -93,15 +111,15 @@ function hideAllPages() {
           id
         );
 
+
       if (el) {
+
         el.classList.add(
           "hidden"
         );
       }
-
     }
   );
-
 }
 
 
@@ -122,7 +140,6 @@ function showLogin() {
     0,
     0
   );
-
 }
 
 
@@ -143,7 +160,6 @@ function showRegister() {
     0,
     0
   );
-
 }
 
 
@@ -164,7 +180,6 @@ function showDashboard() {
     0,
     0
   );
-
 }
 
 
@@ -179,11 +194,11 @@ function togglePassword() {
       "loginPassword"
     );
 
+
   input.type =
     input.type === "password"
       ? "text"
       : "password";
-
 }
 
 
@@ -222,12 +237,13 @@ async function handleLogin(
     );
 
     return;
-
   }
 
 
-  showToast(
-    "Memeriksa akun..."
+  setButtonLoading(
+    "loginSubmitButton",
+    true,
+    "Memeriksa..."
   );
 
 
@@ -237,8 +253,8 @@ async function handleLogin(
       await apiRequest(
         "login",
         {
-          user: user,
-          password: password
+          user,
+          password
         }
       );
 
@@ -248,11 +264,11 @@ async function handleLogin(
     ) {
 
       showToast(
-        res.message
+        res.message ||
+        "Login gagal."
       );
 
       return;
-
     }
 
 
@@ -280,8 +296,9 @@ async function handleLogin(
 
     await loadDashboard();
 
-
     showDashboard();
+
+    setupRoleInterface();
 
 
     showToast(
@@ -290,22 +307,20 @@ async function handleLogin(
       "."
     );
 
-
-    setTimeout(
-      setupRoleInterface,
-      100
-    );
-
-  }
-
-  catch (err) {
+  } catch (err) {
 
     showToast(
       err.message
     );
 
-  }
+  } finally {
 
+    setButtonLoading(
+      "loginSubmitButton",
+      false,
+      "MASUK →"
+    );
+  }
 }
 
 
@@ -350,12 +365,14 @@ async function handleRegister(
       "regUsername"
     );
 
+
   const password =
     document
       .getElementById(
         "regPassword"
       )
       .value;
+
 
   const password2 =
     document
@@ -378,7 +395,18 @@ async function handleRegister(
     );
 
     return;
+  }
 
+
+  if (
+    password.length < 6
+  ) {
+
+    showToast(
+      "Password minimal 6 karakter."
+    );
+
+    return;
   }
 
 
@@ -392,12 +420,13 @@ async function handleRegister(
     );
 
     return;
-
   }
 
 
-  showToast(
-    "Mengirim pendaftaran..."
+  setButtonLoading(
+    "registerSubmitButton",
+    true,
+    "Mengirim..."
   );
 
 
@@ -419,7 +448,8 @@ async function handleRegister(
 
 
     showToast(
-      res.message
+      res.message ||
+      "Pendaftaran selesai."
     );
 
 
@@ -436,21 +466,24 @@ async function handleRegister(
 
       setTimeout(
         showLogin,
-        1200
+        1000
       );
-
     }
 
-  }
-
-  catch (err) {
+  } catch (err) {
 
     showToast(
       err.message
     );
 
-  }
+  } finally {
 
+    setButtonLoading(
+      "registerSubmitButton",
+      false,
+      "DAFTAR SEKARANG"
+    );
+  }
 }
 
 
@@ -459,6 +492,14 @@ async function handleRegister(
 ========================================================= */
 
 async function loadDashboard() {
+
+  if (
+    !sessionToken
+  ) {
+
+    return;
+  }
+
 
   const res =
     await apiRequest(
@@ -479,11 +520,9 @@ async function loadDashboard() {
     ) {
 
       forceLogout();
-
     }
 
     return;
-
   }
 
 
@@ -491,31 +530,31 @@ async function loadDashboard() {
     res.user;
 
 
+  localStorage.setItem(
+    "kom3_user",
+    JSON.stringify(
+      currentUser
+    )
+  );
+
+
   updateProfileDisplay(
     res.user
   );
 
-
   updateStats(
-    res.stats
+    res.stats || {}
   );
-
 
   updateAgenda(
     res.agenda
   );
 
-
   updateAnnouncements(
-    res.pengumuman
+    res.pengumuman || []
   );
-
 }
 
-
-/* =========================================================
-   PROFILE
-========================================================= */
 
 function updateProfileDisplay(
   user
@@ -526,15 +565,32 @@ function updateProfileDisplay(
     user.nama
   );
 
+
+  const schoolText =
+    user.role === "Pengurus"
+    &&
+    user.jabatan
+    &&
+    user.jabatan !== "Pengurus"
+
+      ? user.sekolah +
+        " • " +
+        user.jabatan
+
+      : user.sekolah;
+
+
   setText(
     "dashboardSchool",
-    user.sekolah
+    schoolText
   );
+
 
   setText(
     "dashboardRole",
     String(
-      user.role
+      user.role ||
+      "Anggota"
     )
     .toUpperCase()
   );
@@ -549,16 +605,30 @@ function updateProfileDisplay(
   if (member) {
 
     member.textContent =
-      user.id;
-
+      user.id ||
+      "-";
   }
 
+
+  const adminButton =
+    document.getElementById(
+      "adminCenterButton"
+    );
+
+
+  if (adminButton) {
+
+    adminButton.classList.toggle(
+      "hidden",
+      !(
+        user.role === "Admin"
+        ||
+        user.role === "Pengurus"
+      )
+    );
+  }
 }
 
-
-/* =========================================================
-   STATS
-========================================================= */
 
 function updateStats(
   stats
@@ -574,59 +644,84 @@ function updateStats(
 
     point.textContent =
       stats.points || 0;
-
   }
 
 
-  const statValues =
+  const values =
     document.querySelectorAll(
       ".mini-stat strong"
     );
 
 
   if (
-    statValues[0]
+    values[0]
   ) {
 
-    statValues[0].textContent =
+    values[0].textContent =
       stats.attendance ||
       "0 / 0";
-
   }
 
 
   if (
-    statValues[1]
+    values[1]
   ) {
 
-    statValues[1].textContent =
-      stats.certificates || 0;
-
+    values[1].textContent =
+      stats.certificates ||
+      0;
   }
 
 
   if (
-    statValues[2]
+    values[2]
   ) {
 
-    statValues[2].textContent =
+    values[2].textContent =
       (
-        stats.streak || 0
-      ) + "x";
-
+        stats.streak ||
+        0
+      )
+      + "x";
   }
 
 
   if (
-    statValues[3]
+    values[3]
   ) {
 
-    statValues[3].textContent =
+    values[3].textContent =
       stats.kas ||
       "Belum ada";
-
   }
 
+
+  const izinBadge =
+    document.getElementById(
+      "izinPendingBadge"
+    );
+
+
+  if (
+    izinBadge
+  ) {
+
+    const count =
+      Number(
+        stats.pendingLeave ||
+        0
+      );
+
+
+    izinBadge.textContent =
+      count;
+
+
+    izinBadge.classList.toggle(
+      "hidden",
+      count < 1
+    );
+  }
 }
 
 
@@ -636,50 +731,365 @@ function updateStats(
 
 function setupRoleInterface() {
 
-  /*
-   Tombol lonceng:
-   Admin/Pengurus = User Center
-  */
-
-
-  const notif =
-    document.querySelector(
-      ".notification-button"
+  const adminButton =
+    document.getElementById(
+      "adminCenterButton"
     );
 
 
-  if (notif) {
+  if (
+    adminButton
+  ) {
 
-    notif.onclick =
-      function() {
+    adminButton.classList.toggle(
+      "hidden",
+      !(
+        currentUser
+        &&
+        (
+          currentUser.role === "Admin"
+          ||
+          currentUser.role === "Pengurus"
+        )
+      )
+    );
+  }
+}
 
-        if (
-          currentUser &&
-          (
-            currentUser.role ===
-              "Admin"
-            ||
-            currentUser.role ===
-              "Pengurus"
-          )
-        ) {
 
-          openUserCenter();
+/* =========================================================
+   ADMIN CENTER
+========================================================= */
 
-        }
+async function openAdminCenter() {
 
-        else {
+  if (
+    !currentUser
+    ||
+    (
+      currentUser.role !== "Admin"
+      &&
+      currentUser.role !== "Pengurus"
+    )
+  ) {
 
-          showToast(
-            "Tidak ada notifikasi baru."
-          );
+    showToast(
+      "Menu ini khusus Admin/Pengurus."
+    );
 
-        }
-
-      };
-
+    return;
   }
 
+
+  showLoadingModal(
+    "Admin Center"
+  );
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "adminSummary",
+        {
+          token:
+            sessionToken
+        }
+      );
+
+
+    if (
+      !res.success
+    ) {
+
+      showToast(
+        res.message
+      );
+
+      closeModal();
+
+      return;
+    }
+
+
+    const s =
+      res.summary || {};
+
+
+    setModalHtml(`
+
+      <div class="modal-handle"></div>
+
+      <button
+        class="modal-close"
+        type="button"
+        onclick="closeModal()"
+      >
+        ×
+      </button>
+
+
+      <div class="modal-title-row">
+
+        <div class="modal-icon compact">
+          ⚙️
+        </div>
+
+        <div>
+
+          <h3>
+            Admin Center
+          </h3>
+
+          <p class="modal-subtitle">
+            Kelola anggota, kehadiran, dan izin.
+          </p>
+
+        </div>
+
+      </div>
+
+
+      <div class="admin-stat-grid">
+
+        ${adminStatCard(
+          "Anggota Aktif",
+          s.activeUsers || 0,
+          "👥"
+        )}
+
+        ${adminStatCard(
+          "Menunggu Aktivasi",
+          s.pendingUsers || 0,
+          "⏳"
+        )}
+
+        ${adminStatCard(
+          "Pengurus",
+          s.pengurus || 0,
+          "🛡️"
+        )}
+
+        ${adminStatCard(
+          "Izin Menunggu",
+          s.pendingLeaves || 0,
+          "📝"
+        )}
+
+      </div>
+
+
+      <div class="admin-menu-list">
+
+        <button
+          type="button"
+          class="admin-action"
+          onclick="openUserCenter()"
+        >
+
+          <span class="admin-action-icon">
+            👥
+          </span>
+
+          <span>
+
+            <b>
+              Manajemen Anggota
+            </b>
+
+            <small>
+              Aktivasi akun, role, dan jabatan
+            </small>
+
+          </span>
+
+          <span>
+            ›
+          </span>
+
+        </button>
+
+
+        <button
+          type="button"
+          class="admin-action"
+          onclick="openAttendanceManager()"
+        >
+
+          <span class="admin-action-icon">
+            ✅
+          </span>
+
+          <span>
+
+            <b>
+              Absensi Pertemuan
+            </b>
+
+            <small>
+              Catat kehadiran anggota
+            </small>
+
+          </span>
+
+          <span>
+            ›
+          </span>
+
+        </button>
+
+
+        <button
+          type="button"
+          class="admin-action"
+          onclick="openLeaveReview()"
+        >
+
+          <span class="admin-action-icon">
+            📝
+          </span>
+
+          <span>
+
+            <b>
+              Verifikasi Izin
+            </b>
+
+            <small>
+              ${
+                escapeHtml(
+                  String(
+                    s.pendingLeaves || 0
+                  )
+                )
+              }
+              pengajuan menunggu
+            </small>
+
+          </span>
+
+          <span>
+            ›
+          </span>
+
+        </button>
+
+
+        <button
+          type="button"
+          class="admin-action"
+          onclick="openFeature('Agenda MGMP')"
+        >
+
+          <span class="admin-action-icon">
+            📅
+          </span>
+
+          <span>
+
+            <b>
+              Agenda MGMP
+            </b>
+
+            <small>
+              Agenda aktif:
+              ${
+                escapeHtml(
+                  s.activeAgenda
+                    ? s.activeAgenda.nama
+                    : "Belum ada"
+                )
+              }
+            </small>
+
+          </span>
+
+          <span>
+            ›
+          </span>
+
+        </button>
+
+
+        <button
+          type="button"
+          class="admin-action"
+          onclick="openFeature('Pengumuman')"
+        >
+
+          <span class="admin-action-icon">
+            📢
+          </span>
+
+          <span>
+
+            <b>
+              Pengumuman
+            </b>
+
+            <small>
+              Informasi resmi Portal KOM 3
+            </small>
+
+          </span>
+
+          <span>
+            ›
+          </span>
+
+        </button>
+
+      </div>
+
+
+      <button
+        class="secondary-button"
+        type="button"
+        onclick="closeModal()"
+      >
+        Tutup
+      </button>
+
+    `);
+
+  } catch (err) {
+
+    showToast(
+      err.message
+    );
+
+    closeModal();
+  }
+}
+
+
+function adminStatCard(
+  label,
+  value,
+  icon
+) {
+
+  return `
+
+    <div class="admin-stat-card">
+
+      <span>
+        ${icon}
+      </span>
+
+      <small>
+        ${escapeHtml(label)}
+      </small>
+
+      <strong>
+        ${escapeHtml(
+          String(value)
+        )}
+      </strong>
+
+    </div>
+
+  `;
 }
 
 
@@ -717,8 +1127,29 @@ async function openUserCenter() {
       closeModal();
 
       return;
-
     }
+
+
+    const pendingUsers =
+      res.users.filter(
+        u =>
+          String(
+            u.status
+          )
+          .toUpperCase()
+          === "PENDING"
+      );
+
+
+    const activeUsers =
+      res.users.filter(
+        u =>
+          String(
+            u.status
+          )
+          .toUpperCase()
+          === "ACTIVE"
+      );
 
 
     let html = `
@@ -727,190 +1158,75 @@ async function openUserCenter() {
 
       <button
         class="modal-close"
+        type="button"
         onclick="closeModal()"
       >
         ×
       </button>
 
+
       <h3>
         Manajemen Anggota
       </h3>
 
-      <p style="
-        color:#708095;
-        font-size:12px;
-        margin-bottom:15px;
-      ">
-        Aktifkan akun baru dan
-        kelola pengurus.
+
+      <p class="modal-subtitle">
+        Aktifkan anggota baru dan kelola kepengurusan.
       </p>
+
+
+      <div class="section-mini-title">
+        Menunggu Aktivasi
+        (${pendingUsers.length})
+      </div>
 
     `;
 
 
-    res.users.forEach(
+    if (
+      !pendingUsers.length
+    ) {
+
+      html += `
+
+        <div class="empty-panel">
+          Tidak ada akun menunggu aktivasi.
+        </div>
+
+      `;
+    }
+
+
+    pendingUsers.forEach(
       user => {
 
-        html += `
-
-          <div style="
-            padding:12px;
-            margin-bottom:10px;
-            background:#f5f8fb;
-            border-radius:14px;
-            text-align:left;
-          ">
-
-            <strong>
-              ${escapeHtml(user.nama)}
-            </strong>
-
-            <div style="
-              font-size:11px;
-              color:#708095;
-              margin-top:3px;
-            ">
-              ${escapeHtml(user.sekolah)}
-              <br>
-              ${escapeHtml(user.id)}
-            </div>
-
-            <div style="
-              margin-top:8px;
-              font-size:11px;
-            ">
-
-              Status:
-              <b>
-                ${escapeHtml(user.status)}
-              </b>
-
-              &nbsp; | &nbsp;
-
-              Role:
-              <b>
-                ${escapeHtml(user.role)}
-              </b>
-
-            </div>
-
-        `;
+        html +=
+          userCardHtml(
+            user,
+            true
+          );
+      }
+    );
 
 
-        if (
-          user.status ===
-          "PENDING"
-        ) {
+    html += `
 
-          html += `
+      <div class="section-mini-title top-gap">
+        Anggota Aktif
+        (${activeUsers.length})
+      </div>
 
-            <button
-              type="button"
-              class="primary-button"
-              style="
-                margin-top:10px;
-                min-height:40px;
-              "
-              onclick="approveMember(
-                '${user.id}'
-              )"
-            >
-              ✓ Aktifkan Anggota
-            </button>
-
-          `;
-
-        }
+    `;
 
 
-        if (
-          currentUser.role ===
-          "Admin"
-        ) {
+    activeUsers.forEach(
+      user => {
 
-          html += `
-
-            <div style="
-              display:grid;
-              grid-template-columns:
-                1fr 1fr;
-              gap:6px;
-              margin-top:8px;
-            ">
-
-              <select
-                id="role-${user.id}"
-                style="
-                  min-height:40px;
-                  border:1px solid #dce4ec;
-                  border-radius:10px;
-                  padding:6px;
-                "
-              >
-
-                <option
-                  value="Anggota"
-                  ${user.role === "Anggota"
-                    ? "selected"
-                    : ""}
-                >
-                  Anggota
-                </option>
-
-                <option
-                  value="Pengurus"
-                  ${user.role === "Pengurus"
-                    ? "selected"
-                    : ""}
-                >
-                  Pengurus
-                </option>
-
-              </select>
-
-
-              <select
-                id="jabatan-${user.id}"
-                style="
-                  min-height:40px;
-                  border:1px solid #dce4ec;
-                  border-radius:10px;
-                  padding:6px;
-                "
-              >
-
-                ${jabatanOptions(
-                  user.jabatan
-                )}
-
-              </select>
-
-            </div>
-
-
-            <button
-              type="button"
-              class="secondary-button"
-              style="
-                min-height:40px;
-                margin-top:6px;
-              "
-              onclick="saveUserRole(
-                '${user.id}'
-              )"
-            >
-              Simpan Role & Jabatan
-            </button>
-
-          `;
-
-        }
-
-
-        html += `
-          </div>
-        `;
-
+        html +=
+          userCardHtml(
+            user,
+            false
+          );
       }
     );
 
@@ -919,9 +1235,10 @@ async function openUserCenter() {
 
       <button
         class="secondary-button"
-        onclick="closeModal()"
+        type="button"
+        onclick="openAdminCenter()"
       >
-        Tutup
+        ← Kembali ke Admin Center
       </button>
 
     `;
@@ -931,18 +1248,162 @@ async function openUserCenter() {
       html
     );
 
-  }
-
-  catch (err) {
+  } catch (err) {
 
     showToast(
       err.message
     );
 
     closeModal();
+  }
+}
 
+
+function userCardHtml(
+  user,
+  pending
+) {
+
+  let controls = "";
+
+
+  if (
+    pending
+  ) {
+
+    controls += `
+
+      <button
+        type="button"
+        class="primary-button small-action"
+        onclick="approveMember('${escapeJs(user.id)}')"
+      >
+        ✓ Aktifkan Anggota
+      </button>
+
+    `;
   }
 
+
+  if (
+    currentUser
+    &&
+    currentUser.role === "Admin"
+    &&
+    user.id !== currentUser.id
+  ) {
+
+    controls += `
+
+      <div class="two-col-inputs">
+
+        <select
+          id="role-${escapeHtml(user.id)}"
+          class="portal-select"
+        >
+
+          <option
+            value="Anggota"
+            ${
+              user.role === "Anggota"
+                ? "selected"
+                : ""
+            }
+          >
+            Anggota
+          </option>
+
+          <option
+            value="Pengurus"
+            ${
+              user.role === "Pengurus"
+                ? "selected"
+                : ""
+            }
+          >
+            Pengurus
+          </option>
+
+        </select>
+
+
+        <select
+          id="jabatan-${escapeHtml(user.id)}"
+          class="portal-select"
+        >
+
+          ${
+            jabatanOptions(
+              user.jabatan
+            )
+          }
+
+        </select>
+
+      </div>
+
+
+      <button
+        type="button"
+        class="outline-button"
+        onclick="saveUserRole('${escapeJs(user.id)}')"
+      >
+        Simpan Role & Jabatan
+      </button>
+
+    `;
+  }
+
+
+  return `
+
+    <div class="management-card">
+
+      <div class="management-card-head">
+
+        <div>
+
+          <strong>
+            ${escapeHtml(user.nama)}
+          </strong>
+
+          <small>
+            ${escapeHtml(user.sekolah || "-")}
+          </small>
+
+          <small>
+            ${escapeHtml(user.id)}
+          </small>
+
+        </div>
+
+
+        <span
+          class="
+            status-pill
+            ${statusClass(user.status)}
+          "
+        >
+          ${escapeHtml(user.status)}
+        </span>
+
+      </div>
+
+
+      <div class="user-role-line">
+
+        ${escapeHtml(user.role)}
+        •
+        ${escapeHtml(user.jabatan || "Anggota")}
+
+      </div>
+
+
+      ${controls}
+
+    </div>
+
+  `;
 }
 
 
@@ -951,13 +1412,11 @@ function jabatanOptions(
 ) {
 
   const list = [
-
     "Anggota",
     "Ketua",
     "Sekretaris",
     "Bendahara",
     "Bidang"
-
   ];
 
 
@@ -967,9 +1426,11 @@ function jabatanOptions(
 
         <option
           value="${x}"
-          ${x === selected
-            ? "selected"
-            : ""}
+          ${
+            x === selected
+              ? "selected"
+              : ""
+          }
         >
           ${x}
         </option>
@@ -977,173 +1438,119 @@ function jabatanOptions(
       `
     )
     .join("");
-
 }
 
-
-/* =========================================================
-   APPROVE MEMBER
-========================================================= */
 
 async function approveMember(
   id
 ) {
 
-  const res =
-    await apiRequest(
-      "approveUser",
-      {
-        token:
-          sessionToken,
+  try {
 
-        userId:
-          id
-      }
+    const res =
+      await apiRequest(
+        "approveUser",
+        {
+          token:
+            sessionToken,
+
+          userId:
+            id
+        }
+      );
+
+
+    showToast(
+      res.message
     );
 
 
-  showToast(
-    res.message
-  );
+    if (
+      res.success
+    ) {
 
+      await openUserCenter();
+    }
 
-  if (
-    res.success
-  ) {
+  } catch (err) {
 
-    openUserCenter();
-
+    showToast(
+      err.message
+    );
   }
-
 }
 
-
-/* =========================================================
-   ROLE
-========================================================= */
 
 async function saveUserRole(
   userId
 ) {
 
-  const role =
-    document
-      .getElementById(
-        "role-" +
-        userId
-      )
-      .value;
-
-
-  const jabatan =
-    document
-      .getElementById(
-        "jabatan-" +
-        userId
-      )
-      .value;
-
-
-  const res =
-    await apiRequest(
-      "updateUserAccess",
-      {
-        token:
-          sessionToken,
-
-        userId:
-          userId,
-
-        role:
-          role,
-
-        jabatan:
-          jabatan
-      }
+  const roleEl =
+    document.getElementById(
+      "role-" +
+      userId
     );
 
 
-  showToast(
-    res.message
-  );
+  const jabatanEl =
+    document.getElementById(
+      "jabatan-" +
+      userId
+    );
 
 
   if (
-    res.success
+    !roleEl ||
+    !jabatanEl
   ) {
-
-    openUserCenter();
-
-  }
-
-}
-
-
-/* =========================================================
-   FEATURE
-========================================================= */
-
-async function openFeature(
-  name
-) {
-
-  /*
-   KEHADIRAN
-  */
-
-  if (
-    name ===
-    "Kehadiran Saya"
-    ||
-    name ===
-    "Kehadiran"
-  ) {
-
-    if (
-      currentUser.role ===
-        "Admin"
-      ||
-      currentUser.role ===
-        "Pengurus"
-    ) {
-
-      await openAttendanceManager();
-
-    }
-
-    else {
-
-      await openMyAttendance();
-
-    }
 
     return;
-
   }
 
 
-  document
-    .getElementById(
-      "modalTitle"
-    )
-    .textContent =
-      name;
+  try {
+
+    const res =
+      await apiRequest(
+        "updateUserAccess",
+        {
+          token:
+            sessionToken,
+
+          userId,
+
+          role:
+            roleEl.value,
+
+          jabatan:
+            jabatanEl.value
+        }
+      );
 
 
-  document
-    .getElementById(
-      "featureModal"
-    )
-    .classList
-    .remove(
-      "hidden"
+    showToast(
+      res.message
     );
 
+
+    if (
+      res.success
+    ) {
+
+      await openUserCenter();
+    }
+
+  } catch (err) {
+
+    showToast(
+      err.message
+    );
+  }
 }
 
 
 /* =========================================================
-   ABSENSI MANAGER
+   ABSENSI
 ========================================================= */
 
 async function openAttendanceManager() {
@@ -1176,7 +1583,6 @@ async function openAttendanceManager() {
       closeModal();
 
       return;
-
     }
 
 
@@ -1186,46 +1592,34 @@ async function openAttendanceManager() {
 
       <button
         class="modal-close"
+        type="button"
         onclick="closeModal()"
       >
         ×
       </button>
 
+
       <h3>
         Absensi Pertemuan
       </h3>
 
-      <p style="
-        color:#708095;
-        font-size:11px;
-        line-height:1.5;
-      ">
+
+      <p class="modal-subtitle">
 
         <b>
-          ${escapeHtml(
-            res.agenda.nama
-          )}
+          ${escapeHtml(res.agenda.nama)}
         </b>
 
         <br>
 
-        ${escapeHtml(
-          res.agenda.tanggal
-        )}
-
+        ${escapeHtml(res.agenda.tanggal)}
         •
-
-        ${escapeHtml(
-          res.agenda.jam
-        )}
+        ${escapeHtml(res.agenda.jam)}
 
       </p>
 
-      <div style="
-        margin-top:14px;
-        max-height:55vh;
-        overflow:auto;
-      ">
+
+      <div class="list-scroll">
 
     `;
 
@@ -1233,97 +1627,68 @@ async function openAttendanceManager() {
     res.users.forEach(
       user => {
 
-        const sudah =
-          user.statusAbsen ===
-          "HADIR";
+        const status =
+          String(
+            user.statusAbsen || ""
+          )
+          .toUpperCase();
+
+
+        let actionHtml = `
+
+          <button
+            type="button"
+            class="attendance-button"
+            onclick="markPresent('${escapeJs(user.id)}')"
+          >
+            HADIR
+          </button>
+
+        `;
+
+
+        if (
+          status
+        ) {
+
+          actionHtml = `
+
+            <span
+              class="
+                attendance-status
+                ${attendanceStatusClass(status)}
+              "
+            >
+              ${statusIcon(status)}
+              ${escapeHtml(status)}
+            </span>
+
+          `;
+        }
 
 
         html += `
 
-          <div style="
-            display:flex;
-            align-items:center;
-            justify-content:space-between;
-            gap:10px;
-            padding:10px;
-            margin-bottom:8px;
-            background:#f5f8fb;
-            border-radius:12px;
-            text-align:left;
-          ">
+          <div class="attendance-row">
 
-            <div style="
-              min-width:0;
-            ">
+            <div>
 
-              <strong style="
-                font-size:12px;
-              ">
-                ${escapeHtml(
-                  user.nama
-                )}
+              <strong>
+                ${escapeHtml(user.nama)}
               </strong>
 
-              <div style="
-                font-size:10px;
-                color:#708095;
-                margin-top:3px;
-              ">
-                ${escapeHtml(
-                  user.sekolah
-                )}
-              </div>
+              <small>
+                ${escapeHtml(user.sekolah)}
+              </small>
 
             </div>
 
 
-            ${
-              sudah
-
-              ? `
-
-                <span style="
-                  padding:7px 9px;
-                  color:#12805c;
-                  background:#e3f7ef;
-                  border-radius:10px;
-                  font-size:10px;
-                  font-weight:800;
-                ">
-                  ✓ HADIR
-                </span>
-
-              `
-
-              : `
-
-                <button
-                  type="button"
-                  onclick="
-                    markPresent(
-                      '${user.id}'
-                    )
-                  "
-                  style="
-                    border:0;
-                    padding:8px 10px;
-                    color:white;
-                    background:#14538a;
-                    border-radius:10px;
-                    font-size:10px;
-                    font-weight:800;
-                  "
-                >
-                  HADIR
-                </button>
-
-              `
-            }
+            ${actionHtml}
 
           </div>
 
         `;
-
       }
     );
 
@@ -1332,11 +1697,13 @@ async function openAttendanceManager() {
 
       </div>
 
+
       <button
         class="secondary-button"
-        onclick="closeModal()"
+        type="button"
+        onclick="openAdminCenter()"
       >
-        Selesai
+        ← Kembali ke Admin Center
       </button>
 
     `;
@@ -1346,24 +1713,16 @@ async function openAttendanceManager() {
       html
     );
 
-  }
-
-  catch (err) {
+  } catch (err) {
 
     showToast(
       err.message
     );
 
     closeModal();
-
   }
-
 }
 
-
-/* =========================================================
-   MARK PRESENT
-========================================================= */
 
 async function markPresent(
   userId
@@ -1374,40 +1733,42 @@ async function markPresent(
   );
 
 
-  const res =
-    await apiRequest(
-      "markAttendance",
-      {
-        token:
-          sessionToken,
+  try {
 
-        userId:
+    const res =
+      await apiRequest(
+        "markAttendance",
+        {
+          token:
+            sessionToken,
+
           userId
-      }
+        }
+      );
+
+
+    showToast(
+      res.message
     );
 
 
-  showToast(
-    res.message
-  );
+    if (
+      res.success
+    ) {
 
+      await openAttendanceManager();
 
-  if (
-    res.success
-  ) {
+      await loadDashboard();
+    }
 
-    await openAttendanceManager();
+  } catch (err) {
 
-    await loadDashboard();
-
+    showToast(
+      err.message
+    );
   }
-
 }
 
-
-/* =========================================================
-   MY ATTENDANCE
-========================================================= */
 
 async function openMyAttendance() {
 
@@ -1439,7 +1800,6 @@ async function openMyAttendance() {
       closeModal();
 
       return;
-
     }
 
 
@@ -1449,88 +1809,82 @@ async function openMyAttendance() {
 
       <button
         class="modal-close"
+        type="button"
         onclick="closeModal()"
       >
         ×
       </button>
 
+
       <h3>
         Kehadiran Saya
       </h3>
+
+
+      <p class="modal-subtitle">
+        Riwayat kehadiran dan status izin/dinas.
+      </p>
 
     `;
 
 
     if (
-      res.history.length === 0
+      !res.history.length
     ) {
 
       html += `
 
-        <p style="
-          color:#708095;
-          font-size:12px;
-        ">
+        <div class="empty-panel">
           Belum ada riwayat kehadiran.
-        </p>
+        </div>
 
       `;
-
     }
 
 
     res.history.forEach(
       item => {
 
+        const status =
+          String(
+            item.status || ""
+          )
+          .toUpperCase();
+
+
         html += `
 
-          <div style="
-            padding:12px;
-            margin-top:8px;
-            background:#f5f8fb;
-            border-radius:12px;
-            text-align:left;
-          ">
+          <div class="history-card">
 
-            <strong style="
-              font-size:12px;
-            ">
-              ${escapeHtml(
-                item.agenda
-              )}
-            </strong>
+            <div class="history-topline">
 
-            <div style="
-              color:#708095;
-              font-size:10px;
-              margin-top:4px;
-            ">
-              ${escapeHtml(
-                item.tanggal
-              )}
+              <strong>
+                ${escapeHtml(item.agenda)}
+              </strong>
 
+
+              <span
+                class="
+                  attendance-status
+                  ${attendanceStatusClass(status)}
+                "
+              >
+                ${statusIcon(status)}
+                ${escapeHtml(status)}
+              </span>
+
+            </div>
+
+
+            <small>
+              ${escapeHtml(item.tanggal)}
               •
-
-              ${escapeHtml(
-                item.jam
-              )}
-            </div>
-
-            <div style="
-              margin-top:5px;
-              color:#12805c;
-              font-size:10px;
-              font-weight:900;
-            ">
-              ✓ ${escapeHtml(
-                item.status
-              )}
-            </div>
+              ${escapeHtml(item.jam)}
+            </small>
 
           </div>
 
         `;
-
       }
     );
 
@@ -1539,6 +1893,7 @@ async function openMyAttendance() {
 
       <button
         class="secondary-button"
+        type="button"
         onclick="closeModal()"
       >
         Tutup
@@ -1551,73 +1906,1064 @@ async function openMyAttendance() {
       html
     );
 
-  }
-
-  catch (err) {
+  } catch (err) {
 
     showToast(
       err.message
     );
 
     closeModal();
-
   }
-
 }
 
 
 /* =========================================================
-   MODAL HELPERS
+   IZIN TIDAK HADIR
 ========================================================= */
 
-function showLoadingModal(
-  title
-) {
+async function openLeaveCenter() {
 
-  setModalHtml(`
-
-    <div class="modal-handle"></div>
-
-    <button
-      class="modal-close"
-      onclick="closeModal()"
-    >
-      ×
-    </button>
-
-    <div class="modal-icon">
-      ⏳
-    </div>
-
-    <h3>
-      ${escapeHtml(title)}
-    </h3>
-
-    <p>
-      Memuat data...
-    </p>
-
-  `);
-
-}
+  showLoadingModal(
+    "Izin Tidak Hadir"
+  );
 
 
-function setModalHtml(
-  html
-) {
+  try {
 
-  const modal =
-    document.querySelector(
-      "#featureModal .modal-card"
+    const [
+      agendaRes,
+      leaveRes
+    ] =
+      await Promise.all([
+        apiRequest(
+          "agendaOptions",
+          {
+            token:
+              sessionToken
+          }
+        ),
+
+        apiRequest(
+          "myLeaves",
+          {
+            token:
+              sessionToken
+          }
+        )
+      ]);
+
+
+    if (
+      !agendaRes.success
+    ) {
+
+      showToast(
+        agendaRes.message
+      );
+
+      closeModal();
+
+      return;
+    }
+
+
+    const agendas =
+      agendaRes.agendas ||
+      [];
+
+
+    const history =
+      leaveRes.success
+        ? leaveRes.history || []
+        : [];
+
+
+    let agendaOptions = `
+
+      <option value="">
+        Pilih kegiatan...
+      </option>
+
+    `;
+
+
+    agendas.forEach(
+      item => {
+
+        agendaOptions += `
+
+          <option
+            value="${escapeHtml(item.id)}"
+          >
+            ${escapeHtml(item.tanggal)}
+            —
+            ${escapeHtml(item.nama)}
+          </option>
+
+        `;
+      }
     );
 
 
-  if (modal) {
+    let historyHtml = "";
 
-    modal.innerHTML =
-      html;
 
+    if (
+      !history.length
+    ) {
+
+      historyHtml = `
+
+        <div class="empty-panel">
+          Belum ada riwayat izin.
+        </div>
+
+      `;
+
+    } else {
+
+      history
+        .slice(
+          0,
+          8
+        )
+        .forEach(
+          item => {
+
+            historyHtml += `
+
+              <div class="history-card">
+
+                <div class="history-topline">
+
+                  <strong>
+                    ${escapeHtml(item.agenda)}
+                  </strong>
+
+
+                  <span
+                    class="
+                      status-pill
+                      ${leaveStatusClass(item.status)}
+                    "
+                  >
+                    ${leaveStatusLabel(item.status)}
+                  </span>
+
+                </div>
+
+
+                <small>
+                  ${escapeHtml(item.jenisIzin)}
+                  •
+                  ${escapeHtml(item.tanggalKirim)}
+                </small>
+
+
+                <p>
+                  ${escapeHtml(item.keterangan)}
+                </p>
+
+
+                ${
+                  item.catatan
+                    ? `
+                      <small>
+                        Catatan:
+                        ${escapeHtml(item.catatan)}
+                      </small>
+                    `
+                    : ""
+                }
+
+              </div>
+
+            `;
+          }
+        );
+    }
+
+
+    setModalHtml(`
+
+      <div class="modal-handle"></div>
+
+
+      <button
+        class="modal-close"
+        type="button"
+        onclick="closeModal()"
+      >
+        ×
+      </button>
+
+
+      <h3>
+        Izin Tidak Hadir
+      </h3>
+
+
+      <p class="modal-subtitle">
+        Kirim izin dan pantau status verifikasinya.
+      </p>
+
+
+      <form
+        id="leaveForm"
+        onsubmit="submitLeaveFromModal(event)"
+      >
+
+        <label class="modal-label">
+          Kegiatan
+        </label>
+
+
+        <select
+          id="leaveAgenda"
+          class="portal-select full"
+          required
+        >
+          ${agendaOptions}
+        </select>
+
+
+        <label class="modal-label">
+          Jenis Izin
+        </label>
+
+
+        <select
+          id="leaveType"
+          class="portal-select full"
+          required
+        >
+
+          <option value="SAKIT">
+            Sakit
+          </option>
+
+          <option value="DINAS">
+            Dinas
+          </option>
+
+          <option value="KELUARGA">
+            Kepentingan Keluarga
+          </option>
+
+          <option value="LAINNYA">
+            Lainnya
+          </option>
+
+        </select>
+
+
+        <label class="modal-label">
+          Keterangan
+        </label>
+
+
+        <textarea
+          id="leaveDescription"
+          class="portal-textarea"
+          rows="3"
+          placeholder="Tuliskan alasan singkat..."
+          required
+        ></textarea>
+
+
+        <label class="modal-label">
+
+          Bukti Foto / Surat
+
+          <span class="optional-text">
+            opsional, maks. 2 MB
+          </span>
+
+        </label>
+
+
+        <input
+          id="leaveFile"
+          class="portal-file"
+          type="file"
+          accept="
+            image/jpeg,
+            image/png,
+            image/webp,
+            application/pdf
+          "
+        >
+
+
+        <div class="file-note">
+          Format:
+          JPG, PNG, WEBP, atau PDF.
+        </div>
+
+
+        <button
+          id="leaveSubmitButton"
+          type="submit"
+          class="primary-button"
+        >
+          KIRIM IZIN
+        </button>
+
+      </form>
+
+
+      <div class="section-mini-title top-gap">
+        Riwayat Izin
+      </div>
+
+
+      ${historyHtml}
+
+
+      <button
+        class="secondary-button"
+        type="button"
+        onclick="closeModal()"
+      >
+        Tutup
+      </button>
+
+    `);
+
+  } catch (err) {
+
+    showToast(
+      err.message
+    );
+
+    closeModal();
   }
+}
+
+
+async function submitLeaveFromModal(
+  event
+) {
+
+  event.preventDefault();
+
+
+  const agendaId =
+    document
+      .getElementById(
+        "leaveAgenda"
+      )
+      .value;
+
+
+  const jenisIzin =
+    document
+      .getElementById(
+        "leaveType"
+      )
+      .value;
+
+
+  const keterangan =
+    document
+      .getElementById(
+        "leaveDescription"
+      )
+      .value
+      .trim();
+
+
+  const fileInput =
+    document.getElementById(
+      "leaveFile"
+    );
+
+
+  if (
+    !agendaId
+    ||
+    !jenisIzin
+    ||
+    !keterangan
+  ) {
+
+    showToast(
+      "Lengkapi data izin."
+    );
+
+    return;
+  }
+
+
+  let filePayload = null;
+
+
+  if (
+    fileInput
+    &&
+    fileInput.files
+    &&
+    fileInput.files[0]
+  ) {
+
+    const file =
+      fileInput.files[0];
+
+
+    if (
+      file.size >
+      APP_CONFIG.maxProofBytes
+    ) {
+
+      showToast(
+        "Ukuran bukti maksimal 2 MB."
+      );
+
+      return;
+    }
+
+
+    try {
+
+      filePayload =
+        await fileToPayload(
+          file
+        );
+
+    } catch (err) {
+
+      showToast(
+        "Bukti gagal dibaca."
+      );
+
+      return;
+    }
+  }
+
+
+  setButtonLoading(
+    "leaveSubmitButton",
+    true,
+    "Mengirim..."
+  );
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "submitLeave",
+        {
+          token:
+            sessionToken,
+
+          agendaId,
+
+          jenisIzin,
+
+          keterangan,
+
+          file:
+            filePayload
+        }
+      );
+
+
+    showToast(
+      res.message
+    );
+
+
+    if (
+      res.success
+    ) {
+
+      await loadDashboard();
+
+      await openLeaveCenter();
+    }
+
+  } catch (err) {
+
+    showToast(
+      err.message
+    );
+
+  } finally {
+
+    setButtonLoading(
+      "leaveSubmitButton",
+      false,
+      "KIRIM IZIN"
+    );
+  }
+}
+
+
+function fileToPayload(
+  file
+) {
+
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+
+      const reader =
+        new FileReader();
+
+
+      reader.onload =
+        () => {
+
+          const result =
+            String(
+              reader.result || ""
+            );
+
+
+          const commaIndex =
+            result.indexOf(
+              ","
+            );
+
+
+          if (
+            commaIndex < 0
+          ) {
+
+            reject(
+              new Error(
+                "Format file tidak valid."
+              )
+            );
+
+            return;
+          }
+
+
+          resolve({
+
+            name:
+              file.name,
+
+            mimeType:
+              file.type,
+
+            base64:
+              result.substring(
+                commaIndex + 1
+              )
+          });
+        };
+
+
+      reader.onerror =
+        () =>
+          reject(
+            reader.error
+            ||
+            new Error(
+              "File gagal dibaca."
+            )
+          );
+
+
+      reader.readAsDataURL(
+        file
+      );
+    }
+  );
+}
+
+
+/* =========================================================
+   VERIFIKASI IZIN
+========================================================= */
+
+async function openLeaveReview() {
+
+  showLoadingModal(
+    "Verifikasi Izin"
+  );
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "pendingLeaves",
+        {
+          token:
+            sessionToken
+        }
+      );
+
+
+    if (
+      !res.success
+    ) {
+
+      showToast(
+        res.message
+      );
+
+      closeModal();
+
+      return;
+    }
+
+
+    let html = `
+
+      <div class="modal-handle"></div>
+
+      <button
+        class="modal-close"
+        type="button"
+        onclick="closeModal()"
+      >
+        ×
+      </button>
+
+
+      <h3>
+        Verifikasi Izin
+      </h3>
+
+
+      <p class="modal-subtitle">
+        Periksa pengajuan izin anggota.
+      </p>
+
+    `;
+
+
+    if (
+      !res.leaves.length
+    ) {
+
+      html += `
+
+        <div class="empty-panel">
+          Tidak ada izin menunggu verifikasi.
+        </div>
+
+      `;
+    }
+
+
+    res.leaves.forEach(
+      item => {
+
+        html += `
+
+          <div class="management-card">
+
+            <div class="management-card-head">
+
+              <div>
+
+                <strong>
+                  ${escapeHtml(item.nama)}
+                </strong>
+
+                <small>
+                  ${escapeHtml(item.sekolah)}
+                </small>
+
+              </div>
+
+
+              <span class="status-pill pending">
+                PENDING
+              </span>
+
+            </div>
+
+
+            <div class="leave-detail">
+
+              <b>
+                ${escapeHtml(item.agenda)}
+              </b>
+
+              <span>
+                ${escapeHtml(item.jenisIzin)}
+                •
+                ${escapeHtml(item.tanggalKirim)}
+              </span>
+
+              <p>
+                ${escapeHtml(item.keterangan)}
+              </p>
+
+            </div>
+
+
+            ${
+              item.hasBukti
+
+              ? `
+
+                <button
+                  type="button"
+                  class="proof-link proof-button"
+                  onclick="openLeaveProof('${escapeJs(item.id)}')"
+                >
+                  📎 Lihat Bukti
+                </button>
+
+              `
+
+              : `
+
+                <div class="file-note">
+                  Tidak ada bukti yang diunggah.
+                </div>
+
+              `
+            }
+
+
+            <textarea
+              id="review-note-${escapeHtml(item.id)}"
+              class="portal-textarea"
+              rows="2"
+              placeholder="Catatan verifikasi (opsional)"
+            ></textarea>
+
+
+            <div class="review-buttons">
+
+              <button
+                type="button"
+                class="approve-button"
+                onclick="reviewLeave('${escapeJs(item.id)}','APPROVE')"
+              >
+                ✓ Setujui
+              </button>
+
+
+              <button
+                type="button"
+                class="reject-button"
+                onclick="reviewLeave('${escapeJs(item.id)}','REJECT')"
+              >
+                ✕ Tolak
+              </button>
+
+            </div>
+
+          </div>
+
+        `;
+      }
+    );
+
+
+    html += `
+
+      <button
+        class="secondary-button"
+        type="button"
+        onclick="openAdminCenter()"
+      >
+        ← Kembali ke Admin Center
+      </button>
+
+    `;
+
+
+    setModalHtml(
+      html
+    );
+
+  } catch (err) {
+
+    showToast(
+      err.message
+    );
+
+    closeModal();
+  }
+}
+
+
+async function openLeaveProof(
+  izinId
+) {
+
+  const previewWindow =
+    window.open(
+      "",
+      "_blank"
+    );
+
+
+  if (
+    previewWindow
+  ) {
+
+    previewWindow.document.write(
+      "<p style='font-family:Arial;padding:20px'>Memuat bukti izin...</p>"
+    );
+  }
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "getLeaveProof",
+        {
+          token:
+            sessionToken,
+
+          izinId
+        }
+      );
+
+
+    if (
+      !res.success
+      ||
+      !res.file
+    ) {
+
+      if (
+        previewWindow
+      ) {
+
+        previewWindow.close();
+      }
+
+
+      showToast(
+        res.message ||
+        "Bukti tidak tersedia."
+      );
+
+      return;
+    }
+
+
+    const blob =
+      base64ToBlob(
+        res.file.base64,
+        res.file.mimeType
+      );
+
+
+    const objectUrl =
+      URL.createObjectURL(
+        blob
+      );
+
+
+    if (
+      previewWindow
+    ) {
+
+      previewWindow.location.href =
+        objectUrl;
+
+    } else {
+
+      window.location.href =
+        objectUrl;
+    }
+
+
+    setTimeout(
+      () =>
+        URL.revokeObjectURL(
+          objectUrl
+        ),
+      60000
+    );
+
+  } catch (err) {
+
+    if (
+      previewWindow
+    ) {
+
+      previewWindow.close();
+    }
+
+
+    showToast(
+      err.message
+    );
+  }
+}
+
+
+function base64ToBlob(
+  base64,
+  mimeType
+) {
+
+  const binary =
+    atob(
+      base64
+    );
+
+
+  const bytes =
+    new Uint8Array(
+      binary.length
+    );
+
+
+  for (
+    let i = 0;
+    i < binary.length;
+    i++
+  ) {
+
+    bytes[i] =
+      binary.charCodeAt(
+        i
+      );
+  }
+
+
+  return new Blob(
+    [bytes],
+    {
+      type:
+        mimeType ||
+        "application/octet-stream"
+    }
+  );
+}
+
+
+async function reviewLeave(
+  izinId,
+  decision
+) {
+
+  const noteEl =
+    document.getElementById(
+      "review-note-" +
+      izinId
+    );
+
+
+  const catatan =
+    noteEl
+      ? noteEl.value.trim()
+      : "";
+
+
+  try {
+
+    const res =
+      await apiRequest(
+        "reviewLeave",
+        {
+          token:
+            sessionToken,
+
+          izinId,
+
+          decision,
+
+          catatan
+        }
+      );
+
+
+    showToast(
+      res.message
+    );
+
+
+    if (
+      res.success
+    ) {
+
+      await loadDashboard();
+
+      await openLeaveReview();
+    }
+
+  } catch (err) {
+
+    showToast(
+      err.message
+    );
+  }
+}
+
+
+/* =========================================================
+   FEATURE ROUTER
+========================================================= */
+
+async function openFeature(
+  name
+) {
+
+  if (
+    name === "Kehadiran Saya"
+    ||
+    name === "Kehadiran"
+  ) {
+
+    if (
+      currentUser
+      &&
+      (
+        currentUser.role === "Admin"
+        ||
+        currentUser.role === "Pengurus"
+      )
+    ) {
+
+      await openAttendanceManager();
+
+    } else {
+
+      await openMyAttendance();
+    }
+
+    return;
+  }
+
+
+  if (
+    name === "Izin Tidak Hadir"
+    ||
+    name === "Izin"
+  ) {
+
+    await openLeaveCenter();
+
+    return;
+  }
+
+
+  if (
+    name === "Admin Center"
+  ) {
+
+    await openAdminCenter();
+
+    return;
+  }
+
+
+  document
+    .getElementById(
+      "modalTitle"
+    )
+    .textContent =
+      name;
 
 
   document
@@ -1628,65 +2974,29 @@ function setModalHtml(
     .remove(
       "hidden"
     );
-
-}
-
-
-function closeModal() {
-
-  document
-    .getElementById(
-      "featureModal"
-    )
-    .classList
-    .add(
-      "hidden"
-    );
-
-}
-
-
-function closeModalFromOverlay(
-  event
-) {
-
-  if (
-    event.target.id ===
-    "featureModal"
-  ) {
-
-    closeModal();
-
-  }
-
 }
 
 
 function showAllMenu() {
 
   if (
-    currentUser &&
+    currentUser
+    &&
     (
-      currentUser.role ===
-        "Admin"
+      currentUser.role === "Admin"
       ||
-      currentUser.role ===
-        "Pengurus"
+      currentUser.role === "Pengurus"
     )
   ) {
 
-    openUserCenter();
+    openAdminCenter();
 
-  }
-
-  else {
+  } else {
 
     showToast(
       "Gunakan menu utama pada dashboard."
     );
-
   }
-
 }
 
 
@@ -1704,9 +3014,8 @@ function updateAgenda(
     );
 
 
-  if (
-    !card
-  ) {
+  if (!card) {
+
     return;
   }
 
@@ -1714,23 +3023,41 @@ function updateAgenda(
   if (!agenda) {
 
     card.innerHTML = `
-      <div style="
-        grid-column:1/-1;
-        padding:14px;
-        color:#708095;
-      ">
+
+      <div class="empty-agenda">
         Belum ada agenda aktif.
       </div>
+
     `;
 
     return;
-
   }
 
 
   const parts =
-    agenda.tanggal
-      .split(" ");
+    String(
+      agenda.tanggal || ""
+    )
+    .split(
+      " "
+    );
+
+
+  const tanggal =
+    parts[0] ||
+    "-";
+
+
+  const bulan =
+    (
+      parts[1] ||
+      ""
+    )
+    .substring(
+      0,
+      3
+    )
+    .toUpperCase();
 
 
   card.innerHTML = `
@@ -1738,22 +3065,11 @@ function updateAgenda(
     <div class="agenda-date">
 
       <strong>
-        ${escapeHtml(
-          parts[0] || "-"
-        )}
+        ${escapeHtml(tanggal)}
       </strong>
 
       <span>
-        ${escapeHtml(
-          (
-            parts[1] || ""
-          )
-          .substring(
-            0,
-            3
-          )
-          .toUpperCase()
-        )}
+        ${escapeHtml(bulan)}
       </span>
 
     </div>
@@ -1762,29 +3078,21 @@ function updateAgenda(
     <div class="agenda-info">
 
       <div class="agenda-badge">
-        ${escapeHtml(
-          agenda.moda
-        )}
+        ${escapeHtml(agenda.moda)}
       </div>
 
       <h4>
-        ${escapeHtml(
-          agenda.nama
-        )}
+        ${escapeHtml(agenda.nama)}
       </h4>
 
       <p>
         📍
-        ${escapeHtml(
-          agenda.lokasi
-        )}
+        ${escapeHtml(agenda.lokasi)}
       </p>
 
       <p>
         🕐
-        ${escapeHtml(
-          agenda.jam
-        )}
+        ${escapeHtml(agenda.jam)}
       </p>
 
     </div>
@@ -1792,17 +3100,13 @@ function updateAgenda(
 
     <button
       class="agenda-arrow"
-      onclick="
-        openFeature(
-          'Agenda MGMP'
-        )
-      "
+      type="button"
+      onclick="openFeature('Agenda MGMP')"
     >
       ›
     </button>
 
   `;
-
 }
 
 
@@ -1817,12 +3121,14 @@ function updateAnnouncements(
 
 
   if (!card) {
+
     return;
   }
 
 
   if (
-    !list ||
+    !list
+    ||
     list.length === 0
   ) {
 
@@ -1838,12 +3144,15 @@ function updateAnnouncements(
           Belum ada pengumuman
         </h4>
 
+        <p>
+          Informasi terbaru MGMP akan muncul di sini.
+        </p>
+
       </div>
 
     `;
 
     return;
-
   }
 
 
@@ -1860,28 +3169,20 @@ function updateAnnouncements(
     <div>
 
       <div class="announcement-label">
-        ${escapeHtml(
-          item.kategori ||
-          "UMUM"
-        )}
+        ${escapeHtml(item.kategori || "UMUM")}
       </div>
 
       <h4>
-        ${escapeHtml(
-          item.judul
-        )}
+        ${escapeHtml(item.judul)}
       </h4>
 
       <p>
-        ${escapeHtml(
-          item.isi
-        )}
+        ${escapeHtml(item.isi)}
       </p>
 
     </div>
 
   `;
-
 }
 
 
@@ -1900,9 +3201,11 @@ function setNav(
     )
     .forEach(
       item =>
-        item.classList.remove(
-          "active"
-        )
+        item
+          .classList
+          .remove(
+            "active"
+          )
     );
 
 
@@ -1916,6 +3219,7 @@ function setNav(
   if (
     name === "Home"
   ) {
+
     return;
   }
 
@@ -1925,25 +3229,132 @@ function setNav(
   ) {
 
     showToast(
-      currentUser.nama +
-      " • " +
-      currentUser.role +
-      " • " +
-      (
-        currentUser.jabatan ||
-        ""
+
+      currentUser.nama
+
+      + " • "
+
+      + currentUser.role
+
+      + (
+        currentUser.jabatan
+
+          ? " • " +
+            currentUser.jabatan
+
+          : ""
       )
+
     );
 
     return;
-
   }
 
 
   openFeature(
     name
   );
+}
 
+
+/* =========================================================
+   MODAL
+========================================================= */
+
+function showLoadingModal(
+  title
+) {
+
+  setModalHtml(`
+
+    <div class="modal-handle"></div>
+
+    <button
+      class="modal-close"
+      type="button"
+      onclick="closeModal()"
+    >
+      ×
+    </button>
+
+    <div class="modal-icon">
+      ⏳
+    </div>
+
+    <h3>
+      ${escapeHtml(title)}
+    </h3>
+
+    <p class="modal-subtitle">
+      Memuat data...
+    </p>
+
+  `);
+}
+
+
+function setModalHtml(
+  html
+) {
+
+  const modal =
+    document.querySelector(
+      "#featureModal .modal-card"
+    );
+
+
+  if (
+    modal
+  ) {
+
+    modal.innerHTML =
+      html;
+  }
+
+
+  document
+    .getElementById(
+      "featureModal"
+    )
+    .classList
+    .remove(
+      "hidden"
+    );
+}
+
+
+function closeModal() {
+
+  const modal =
+    document.getElementById(
+      "featureModal"
+    );
+
+
+  if (
+    modal
+  ) {
+
+    modal
+      .classList
+      .add(
+        "hidden"
+      );
+  }
+}
+
+
+function closeModalFromOverlay(
+  event
+) {
+
+  if (
+    event.target.id
+    === "featureModal"
+  ) {
+
+    closeModal();
+  }
 }
 
 
@@ -1955,21 +3366,28 @@ async function logout() {
 
   try {
 
-    await apiRequest(
-      "logout",
-      {
-        token:
-          sessionToken
-      }
+    if (
+      sessionToken
+    ) {
+
+      await apiRequest(
+        "logout",
+        {
+          token:
+            sessionToken
+        }
+      );
+    }
+
+  } catch (e) {
+
+    console.warn(
+      e
     );
-
   }
-
-  catch (e) {}
 
 
   forceLogout();
-
 }
 
 
@@ -1990,17 +3408,29 @@ function forceLogout() {
   );
 
 
-  showLogin();
+  const loginForm =
+    document.getElementById(
+      "loginForm"
+    );
 
+
+  if (
+    loginForm
+  ) {
+
+    loginForm.reset();
+  }
+
+
+  closeModal();
+
+  showLogin();
 }
 
 
 /* =========================================================
    TOAST
 ========================================================= */
-
-let toastTimer;
-
 
 function showToast(
   message
@@ -2014,10 +3444,11 @@ function showToast(
 
   if (!toast) {
 
-    alert(message);
+    alert(
+      message
+    );
 
     return;
-
   }
 
 
@@ -2025,9 +3456,11 @@ function showToast(
     message;
 
 
-  toast.classList.remove(
-    "hidden"
-  );
+  toast
+    .classList
+    .remove(
+      "hidden"
+    );
 
 
   clearTimeout(
@@ -2038,27 +3471,36 @@ function showToast(
   toastTimer =
     setTimeout(
       () => {
-        toast.classList.add(
-          "hidden"
-        );
+
+        toast
+          .classList
+          .add(
+            "hidden"
+          );
+
       },
       3500
     );
-
 }
 
 
 /* =========================================================
-   HELPERS
+   UI HELPERS
 ========================================================= */
 
-function valueOf(id) {
+function valueOf(
+  id
+) {
 
-  return document
-    .getElementById(id)
-    .value
-    .trim();
+  const el =
+    document.getElementById(
+      id
+    );
 
+
+  return el
+    ? el.value.trim()
+    : "";
 }
 
 
@@ -2073,17 +3515,242 @@ function setText(
     );
 
 
-  if (el) {
+  if (
+    el
+  ) {
 
     el.textContent =
       value || "";
-
   }
-
 }
 
 
-function escapeHtml(text) {
+function setButtonLoading(
+  id,
+  loading,
+  text
+) {
+
+  const btn =
+    document.getElementById(
+      id
+    );
+
+
+  if (!btn) {
+
+    return;
+  }
+
+
+  btn.disabled =
+    loading;
+
+
+  btn.textContent =
+    text;
+}
+
+
+function statusClass(
+  status
+) {
+
+  const value =
+    String(
+      status || ""
+    )
+    .toUpperCase();
+
+
+  if (
+    value === "ACTIVE"
+  ) {
+
+    return "approved";
+  }
+
+
+  if (
+    value === "PENDING"
+  ) {
+
+    return "pending";
+  }
+
+
+  if (
+    value === "REJECTED"
+  ) {
+
+    return "rejected";
+  }
+
+
+  return "neutral";
+}
+
+
+function leaveStatusClass(
+  status
+) {
+
+  const value =
+    String(
+      status || ""
+    )
+    .toUpperCase();
+
+
+  if (
+    value === "APPROVED"
+  ) {
+
+    return "approved";
+  }
+
+
+  if (
+    value === "PENDING"
+  ) {
+
+    return "pending";
+  }
+
+
+  if (
+    value === "REJECTED"
+  ) {
+
+    return "rejected";
+  }
+
+
+  return "neutral";
+}
+
+
+function leaveStatusLabel(
+  status
+) {
+
+  const value =
+    String(
+      status || ""
+    )
+    .toUpperCase();
+
+
+  if (
+    value === "APPROVED"
+  ) {
+
+    return "DISETUJUI";
+  }
+
+
+  if (
+    value === "REJECTED"
+  ) {
+
+    return "DITOLAK";
+  }
+
+
+  if (
+    value === "PENDING"
+  ) {
+
+    return "MENUNGGU";
+  }
+
+
+  return value ||
+    "-";
+}
+
+
+function attendanceStatusClass(
+  status
+) {
+
+  const value =
+    String(
+      status || ""
+    )
+    .toUpperCase();
+
+
+  if (
+    value === "HADIR"
+  ) {
+
+    return "hadir";
+  }
+
+
+  if (
+    value === "IZIN"
+  ) {
+
+    return "izin";
+  }
+
+
+  if (
+    value === "DINAS"
+  ) {
+
+    return "dinas";
+  }
+
+
+  return "neutral";
+}
+
+
+function statusIcon(
+  status
+) {
+
+  const value =
+    String(
+      status || ""
+    )
+    .toUpperCase();
+
+
+  if (
+    value === "HADIR"
+  ) {
+
+    return "✓";
+  }
+
+
+  if (
+    value === "IZIN"
+  ) {
+
+    return "🟡";
+  }
+
+
+  if (
+    value === "DINAS"
+  ) {
+
+    return "🔵";
+  }
+
+
+  return "•";
+}
+
+
+function escapeHtml(
+  text
+) {
 
   return String(
     text == null
@@ -2115,12 +3782,43 @@ function escapeHtml(text) {
     "'",
     "&#039;"
   );
+}
 
+
+function escapeJs(
+  text
+) {
+
+  return String(
+    text == null
+      ? ""
+      : text
+  )
+
+  .replaceAll(
+    "\\",
+    "\\\\"
+  )
+
+  .replaceAll(
+    "'",
+    "\\'"
+  )
+
+  .replaceAll(
+    "\n",
+    " "
+  )
+
+  .replaceAll(
+    "\r",
+    " "
+  );
 }
 
 
 /* =========================================================
-   START
+   START APP
 ========================================================= */
 
 document.addEventListener(
@@ -2133,7 +3831,33 @@ document.addEventListener(
 
       try {
 
+        const stored =
+          localStorage.getItem(
+            "kom3_user"
+          );
+
+
+        if (
+          stored
+        ) {
+
+          try {
+
+            currentUser =
+              JSON.parse(
+                stored
+              );
+
+          } catch (e) {
+
+            currentUser =
+              null;
+          }
+        }
+
+
         await loadDashboard();
+
 
         if (
           currentUser
@@ -2141,27 +3865,24 @@ document.addEventListener(
 
           showDashboard();
 
-          setTimeout(
-            setupRoleInterface,
-            100
-          );
+          setupRoleInterface();
 
           return;
-
         }
 
+      } catch (e) {
+
+        console.error(
+          e
+        );
+
+        forceLogout();
+
+        return;
       }
-
-      catch (e) {
-
-        console.log(e);
-
-      }
-
     }
 
 
     showLogin();
-
   }
 );
