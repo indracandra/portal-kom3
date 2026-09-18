@@ -1639,3 +1639,50 @@ button:disabled {
   border: 0;
   cursor: pointer;
 }
+
+
+/* =========================================================
+   V1.2.1 - AGENDA, PENGUMUMAN, RESET PASSWORD
+========================================================= */
+
+.portal-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: #fbfcfe;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  outline: none;
+}
+
+.portal-input:focus {
+  border-color: var(--blue-600);
+  box-shadow: 0 0 0 3px rgba(28, 101, 162, 0.10);
+}
+
+.manager-form {
+  padding: 13px;
+  margin-top: 12px;
+  background: #f7f9fc;
+  border: 1px solid #e2e8f0;
+  border-radius: 15px;
+}
+
+.manager-form .primary-button {
+  margin-top: 14px;
+}
+
+.manager-item-text {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.password-reset-button {
+  margin-top: 7px;
+  color: #7a5300;
+  background: #fff9e8;
+  border-color: #efd47d;
+}
