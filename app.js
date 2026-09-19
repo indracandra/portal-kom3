@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.2
+   PORTAL KOM 3 - FRONTEND V1.2.3
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -19,6 +19,11 @@
    - Upload bukti izin
    - Riwayat izin
    - Verifikasi izin
+
+   TAMBAHAN V1.2.3:
+   - Arsip Rapat & Materi
+   - Materi / Notulen / Hasil Rapat / Dokumentasi
+   - Link Drive/Docs/URL berbagi
 ========================================================= */
 
 const APP_CONFIG = {
@@ -366,6 +371,12 @@ async function openAdminCenter() {
         <button type="button" class="admin-action" onclick="openAnnouncementManager()">
           <span class="admin-action-icon">📢</span>
           <span><b>Pengumuman</b><small>Informasi resmi Portal KOM 3</small></span>
+          <span>›</span>
+        </button>
+
+        <button type="button" class="admin-action" onclick="openMeetingArchive()">
+          <span class="admin-action-icon">🗂️</span>
+          <span><b>Arsip Rapat & Materi</b><small>Materi, notulen, hasil rapat, dan dokumentasi</small></span>
           <span>›</span>
         </button>
       </div>
@@ -906,6 +917,416 @@ async function setAnnouncementStatus(id, status) {
 
 
 /* =========================================================
+   ARSIP RAPAT & MATERI - V1.2.3
+========================================================= */
+
+async function openMeetingArchive(options = {}) {
+  const agendaFilter = options.agendaId || "";
+  const title = options.title || "Arsip Rapat & Materi";
+
+  showLoadingModal(title);
+
+  try {
+    const res = await apiRequest("listMeetingDocuments", {
+      token: sessionToken
+    });
+
+    if (!res.success) {
+      showToast(res.message);
+      closeModal();
+      return;
+    }
+
+    const agendas = res.agendas || [];
+    let documents = res.documents || [];
+
+    if (agendaFilter) {
+      documents = documents.filter(
+        item => item.agendaId === agendaFilter
+      );
+    }
+
+    let agendaOptions = `
+      <option value="">Pilih agenda/kegiatan...</option>
+    `;
+
+    agendas.forEach(item => {
+      agendaOptions += `
+        <option value="${escapeHtml(item.id)}">
+          ${escapeHtml(item.tanggal)} — ${escapeHtml(item.nama)}
+        </option>
+      `;
+    });
+
+    let managerForm = "";
+
+    if (res.isManager) {
+      managerForm = `
+        <div class="archive-manager-box">
+          <div class="section-mini-title">Tambah Arsip Rapat</div>
+
+          <form id="meetingArchiveForm" onsubmit="saveMeetingDocumentFromModal(event)">
+            <label class="modal-label">Agenda / Kegiatan</label>
+            <select id="meetingDocAgenda" class="portal-select full" required>
+              ${agendaOptions}
+            </select>
+
+            <div class="two-col-inputs">
+              <div>
+                <label class="modal-label">Jenis</label>
+                <select id="meetingDocType" class="portal-select full" required>
+                  <option value="MATERI">Materi</option>
+                  <option value="NOTULEN">Notulen</option>
+                  <option value="HASIL_RAPAT">Hasil Rapat</option>
+                  <option value="DOKUMENTASI">Dokumentasi</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="modal-label">Tanggal</label>
+                <input id="meetingDocDate" class="portal-input" type="date">
+              </div>
+            </div>
+
+            <label class="modal-label">Judul</label>
+            <input
+              id="meetingDocTitle"
+              class="portal-input"
+              type="text"
+              placeholder="Contoh: Materi Program Kerja Semester 1"
+              required
+            >
+
+            <label class="modal-label">Ringkasan / Deskripsi</label>
+            <textarea
+              id="meetingDocDescription"
+              class="portal-textarea"
+              rows="4"
+              placeholder="Ringkasan materi, keputusan rapat, tindak lanjut, atau keterangan dokumen..."
+            ></textarea>
+
+            <label class="modal-label">Link Berbagi</label>
+            <input
+              id="meetingDocLink"
+              class="portal-input"
+              type="url"
+              placeholder="https://drive.google.com/..."
+            >
+
+            <div class="file-note">
+              Gunakan link Google Drive/Docs/Slides/YouTube atau URL lain yang dapat diakses anggota.
+            </div>
+
+            <label class="modal-label">Status</label>
+            <select id="meetingDocStatus" class="portal-select full">
+              <option value="AKTIF">Aktif</option>
+              <option value="NONAKTIF">Nonaktif</option>
+            </select>
+
+            <button
+              id="meetingDocSaveButton"
+              type="submit"
+              class="primary-button"
+            >
+              + SIMPAN ARSIP
+            </button>
+          </form>
+        </div>
+      `;
+    }
+
+    const archiveHtml = renderMeetingArchiveList(
+      documents,
+      res.isManager
+    );
+
+    setModalHtml(`
+      <div class="modal-handle"></div>
+
+      <button
+        class="modal-close"
+        type="button"
+        onclick="closeModal()"
+      >
+        ×
+      </button>
+
+      <div class="modal-title-row">
+        <div class="modal-icon compact">🗂️</div>
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p class="modal-subtitle">
+            Materi, notulen, hasil rapat, dan dokumentasi MGMP.
+          </p>
+        </div>
+      </div>
+
+      ${managerForm}
+
+      <div class="section-mini-title ${res.isManager ? "top-gap" : ""}">
+        Arsip Tersimpan
+      </div>
+
+      ${archiveHtml}
+
+      <button
+        class="secondary-button"
+        type="button"
+        onclick="closeModal()"
+      >
+        Tutup
+      </button>
+    `);
+
+    if (agendaFilter) {
+      const select = document.getElementById("meetingDocAgenda");
+      if (select) select.value = agendaFilter;
+    }
+
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
+}
+
+
+function renderMeetingArchiveList(documents, isManager) {
+  if (!documents || !documents.length) {
+    return `
+      <div class="empty-panel">
+        Belum ada materi/notulen/hasil rapat yang tersimpan.
+      </div>
+    `;
+  }
+
+  const groups = {};
+
+  documents.forEach(item => {
+    const key = item.agendaId || "LAINNYA";
+
+    if (!groups[key]) {
+      groups[key] = {
+        agendaNama: item.agendaNama || "Kegiatan MGMP",
+        agendaTanggal: item.agendaTanggal || "",
+        items: []
+      };
+    }
+
+    groups[key].items.push(item);
+  });
+
+  let html = "";
+
+  Object.keys(groups).forEach(key => {
+    const group = groups[key];
+
+    html += `
+      <div class="archive-agenda-group">
+        <div class="archive-agenda-head">
+          <div>
+            <strong>${escapeHtml(group.agendaNama)}</strong>
+            <small>${escapeHtml(group.agendaTanggal)}</small>
+          </div>
+          <span class="archive-count">${group.items.length}</span>
+        </div>
+    `;
+
+    group.items.forEach(item => {
+      const jenis = formatDocumentType(item.jenis);
+      const icon = documentTypeIcon(item.jenis);
+      const nextStatus = item.status === "AKTIF" ? "NONAKTIF" : "AKTIF";
+      const toggleText = item.status === "AKTIF" ? "Nonaktifkan" : "Aktifkan";
+
+      html += `
+        <div class="archive-card">
+          <div class="archive-card-top">
+            <span class="archive-type-icon">${icon}</span>
+
+            <div class="archive-card-title">
+              <span class="archive-type-label">${escapeHtml(jenis)}</span>
+              <strong>${escapeHtml(item.judul)}</strong>
+              <small>
+                ${escapeHtml(item.tanggal)}
+                ${item.dibuatOleh ? " • " + escapeHtml(item.dibuatOleh) : ""}
+              </small>
+            </div>
+
+            ${
+              isManager
+                ? `<span class="status-pill ${item.status === "AKTIF" ? "approved" : "neutral"}">${escapeHtml(item.status)}</span>`
+                : ""
+            }
+          </div>
+
+          ${
+            item.deskripsi
+              ? `<p class="archive-description">${escapeHtml(item.deskripsi)}</p>`
+              : ""
+          }
+
+          <div class="archive-actions">
+            ${
+              item.link
+                ? `
+                  <button
+                    type="button"
+                    class="archive-open-button"
+                    onclick="openExternalLink('${escapeJs(item.link)}')"
+                  >
+                    🔗 Buka Link
+                  </button>
+                `
+                : `<span class="archive-no-link">Tanpa link</span>`
+            }
+
+            ${
+              isManager
+                ? `
+                  <button
+                    type="button"
+                    class="archive-toggle-button"
+                    onclick="setMeetingDocumentStatus('${escapeJs(item.id)}','${escapeJs(nextStatus)}')"
+                  >
+                    ${toggleText}
+                  </button>
+                `
+                : ""
+            }
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+  });
+
+  return html;
+}
+
+
+async function saveMeetingDocumentFromModal(event) {
+  event.preventDefault();
+
+  const payload = {
+    token: sessionToken,
+    agendaId: document.getElementById("meetingDocAgenda").value,
+    jenis: document.getElementById("meetingDocType").value,
+    judul: valueOf("meetingDocTitle"),
+    deskripsi: document.getElementById("meetingDocDescription").value.trim(),
+    link: valueOf("meetingDocLink"),
+    tanggal: valueOf("meetingDocDate"),
+    status: document.getElementById("meetingDocStatus").value
+  };
+
+  setButtonLoading(
+    "meetingDocSaveButton",
+    true,
+    "Menyimpan..."
+  );
+
+  try {
+    const res = await apiRequest(
+      "saveMeetingDocument",
+      payload
+    );
+
+    showToast(res.message);
+
+    if (res.success) {
+      await openMeetingArchive();
+    }
+
+  } catch (err) {
+    showToast(err.message);
+
+  } finally {
+    setButtonLoading(
+      "meetingDocSaveButton",
+      false,
+      "+ SIMPAN ARSIP"
+    );
+  }
+}
+
+
+async function setMeetingDocumentStatus(id, status) {
+  try {
+    const res = await apiRequest(
+      "setMeetingDocumentStatus",
+      {
+        token: sessionToken,
+        id,
+        status
+      }
+    );
+
+    showToast(res.message);
+
+    if (res.success) {
+      await openMeetingArchive();
+    }
+
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+
+async function openAgendaPublic() {
+  await openMeetingArchive({
+    title: "Agenda & Hasil Kegiatan"
+  });
+}
+
+
+function formatDocumentType(type) {
+  const value = String(type || "").toUpperCase();
+
+  if (value === "MATERI") return "Materi";
+  if (value === "NOTULEN") return "Notulen";
+  if (value === "HASIL_RAPAT") return "Hasil Rapat";
+  if (value === "DOKUMENTASI") return "Dokumentasi";
+
+  return value || "Dokumen";
+}
+
+
+function documentTypeIcon(type) {
+  const value = String(type || "").toUpperCase();
+
+  if (value === "MATERI") return "📚";
+  if (value === "NOTULEN") return "📝";
+  if (value === "HASIL_RAPAT") return "✅";
+  if (value === "DOKUMENTASI") return "📷";
+
+  return "📄";
+}
+
+
+function openExternalLink(url) {
+  try {
+    const parsed = new URL(url);
+
+    if (
+      parsed.protocol !== "https:" &&
+      parsed.protocol !== "http:"
+    ) {
+      throw new Error("URL tidak aman.");
+    }
+
+    window.open(
+      parsed.href,
+      "_blank",
+      "noopener,noreferrer"
+    );
+
+  } catch (err) {
+    showToast("Link tidak valid.");
+  }
+}
+
+
+/* =========================================================
    ABSENSI - FITUR LAMA TETAP
 ========================================================= */
 
@@ -1382,6 +1803,9 @@ async function openFeature(name) {
       await openAgendaManager();
       return;
     }
+
+    await openAgendaPublic();
+    return;
   }
 
   if (name === "Pengumuman") {
@@ -1389,6 +1813,11 @@ async function openFeature(name) {
       await openAnnouncementManager();
       return;
     }
+  }
+
+  if (name === "Dokumen MGMP" || name === "Arsip Rapat & Materi") {
+    await openMeetingArchive();
+    return;
   }
 
   document.getElementById("modalTitle").textContent = name;
