@@ -1686,3 +1686,195 @@ button:disabled {
   background: #fff9e8;
   border-color: #efd47d;
 }
+
+/* =========================================================
+   V1.2.3 - ARSIP RAPAT & MATERI
+   Tambahan saja. Style lama tetap dipertahankan.
+========================================================= */
+
+.archive-manager-box {
+  margin-top: 14px;
+  padding: 14px;
+  background: #f7f9fc;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+}
+
+.archive-agenda-group {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e4eaf1;
+  border-radius: 16px;
+}
+
+.archive-agenda-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #e4eaf1;
+}
+
+.archive-agenda-head > div {
+  min-width: 0;
+}
+
+.archive-agenda-head strong {
+  display: block;
+  color: var(--navy-900);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.archive-agenda-head small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.archive-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  color: var(--blue-700);
+  background: var(--blue-100);
+  border-radius: 14px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.archive-card {
+  padding: 12px;
+  margin-bottom: 9px;
+  background: #ffffff;
+  border: 1px solid #e1e8ef;
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.archive-card:last-child {
+  margin-bottom: 0;
+}
+
+.archive-card-top {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+}
+
+.archive-type-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: #eef4fa;
+  border-radius: 11px;
+  font-size: 17px;
+}
+
+.archive-card-title {
+  min-width: 0;
+}
+
+.archive-card-title strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--navy-900);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.archive-card-title small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.archive-type-label {
+  display: inline-block;
+  padding: 3px 7px;
+  color: var(--blue-700);
+  background: #e8f2fb;
+  border-radius: 20px;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.45px;
+  text-transform: uppercase;
+}
+
+.archive-description {
+  margin: 10px 0 0;
+  color: #586a7c;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.archive-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.archive-open-button,
+.archive-toggle-button {
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.archive-open-button {
+  color: #ffffff;
+  background: var(--blue-700);
+  border: 0;
+}
+
+.archive-toggle-button {
+  color: var(--navy-900);
+  background: #f0f4f8;
+  border: 1px solid #dce4ec;
+}
+
+.archive-no-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: #f5f7fa;
+  border-radius: 10px;
+  font-size: 9px;
+}
+
+@media (max-width: 420px) {
+  .archive-card-top {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .archive-card-top > .status-pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .archive-manager-box {
+    padding: 12px;
+  }
+}
