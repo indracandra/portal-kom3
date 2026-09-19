@@ -1878,3 +1878,602 @@ button:disabled {
     padding: 12px;
   }
 }
+
+
+/* =========================================================
+   V1.2.4 - MOBILE COMPACT UI
+   Ditambahkan di bagian akhir. Style V1.2.3 tetap utuh.
+========================================================= */
+
+.compact-widget-section {
+  margin-top: 10px;
+}
+
+.prayer-compact-card {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 12px 13px;
+  color: var(--text);
+  background: linear-gradient(135deg, #ffffff 0%, #f4f8fc 100%);
+  border: 1px solid #dce7f0;
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  text-align: left;
+}
+
+.prayer-compact-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: var(--green-100);
+  font-size: 21px;
+}
+
+.prayer-compact-main {
+  min-width: 0;
+}
+
+.prayer-compact-main small,
+.prayer-compact-main span {
+  display: block;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.prayer-compact-main strong {
+  display: block;
+  margin: 2px 0;
+  color: var(--navy-900);
+  font-size: 12px;
+}
+
+.prayer-compact-main strong b {
+  color: var(--green-700);
+}
+
+.prayer-compact-arrow {
+  color: var(--blue-600);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.compact-search-wrap {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  gap: 5px;
+  margin: 13px 0 9px;
+  padding: 0 10px;
+  background: #f5f8fb;
+  border: 1px solid #e0e8ef;
+  border-radius: 12px;
+}
+
+.compact-search-wrap > span {
+  font-size: 13px;
+}
+
+.compact-search {
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 11px;
+}
+
+.compact-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 9px 0 11px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.compact-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.compact-tab {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 11px;
+  color: #637487;
+  background: #f0f4f8;
+  border: 1px solid #e0e7ee;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.compact-tab b {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  margin-left: 3px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.7);
+  font-size: 8px;
+}
+
+.compact-tab.active {
+  color: #ffffff;
+  background: var(--navy-800);
+  border-color: var(--navy-800);
+}
+
+.compact-list {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-row-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 12px;
+  background: #f8fafc;
+  border: 1px solid #e3eaf1;
+  border-radius: 13px;
+  text-align: left;
+}
+
+.compact-row-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.compact-row-main strong,
+.compact-row-main small,
+.compact-row-main span {
+  display: block;
+}
+
+.compact-row-main strong {
+  color: var(--navy-900);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.compact-row-main small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.compact-row-main span {
+  margin-top: 4px;
+  color: #536679;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.compact-row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.compact-detail-button,
+.compact-more-button,
+.compact-back-button {
+  border: 0;
+  font-weight: 850;
+}
+
+.compact-detail-button {
+  min-height: 31px;
+  padding: 0 10px;
+  color: var(--blue-700);
+  background: var(--blue-100);
+  border-radius: 9px;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.compact-more-button {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 9px;
+  color: var(--blue-700);
+  background: #f0f6fb;
+  border: 1px dashed #bfd3e4;
+  border-radius: 11px;
+  font-size: 9px;
+}
+
+.compact-disclosure {
+  margin: 12px 0;
+  padding: 0;
+  background: #f7f9fc;
+  border: 1px solid #e0e8f0;
+  border-radius: 14px;
+  text-align: left;
+  overflow: hidden;
+}
+
+.compact-disclosure > summary {
+  padding: 12px 13px;
+  color: var(--navy-900);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 900;
+  list-style: none;
+}
+
+.compact-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.compact-disclosure[open] > summary {
+  border-bottom: 1px solid #e0e8f0;
+  background: #eef5fb;
+}
+
+.compact-form {
+  padding: 12px;
+}
+
+.compact-detail-header {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  align-items: start;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-right: 32px;
+  text-align: left;
+}
+
+.compact-detail-header h3 {
+  margin: 1px 0 3px;
+}
+
+.compact-back-button {
+  width: 34px;
+  height: 34px;
+  color: var(--navy-900);
+  background: #edf2f7;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+.compact-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.compact-detail-grid > div {
+  padding: 10px;
+  background: #f7f9fb;
+  border: 1px solid #e3e9ef;
+  border-radius: 11px;
+  min-width: 0;
+}
+
+.compact-detail-grid small,
+.compact-detail-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.compact-detail-grid small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.compact-detail-grid strong {
+  margin-top: 3px;
+  color: var(--navy-900);
+  font-size: 10px;
+}
+
+.compact-clamp-2 {
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.compact-filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin: 8px 0 11px;
+}
+
+.compact-counter-strip {
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  gap: 6px;
+  margin: 12px 0 4px;
+}
+
+.compact-counter-strip span {
+  padding: 8px 5px;
+  color: var(--muted);
+  background: #f5f8fb;
+  border-radius: 10px;
+  font-size: 8px;
+  text-align: center;
+}
+
+.compact-counter-strip b {
+  display: block;
+  margin-top: 2px;
+  color: var(--navy-900);
+  font-size: 14px;
+}
+
+.agenda-list-card {
+  display: grid;
+  grid-template-columns: 46px minmax(0,1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  color: var(--text);
+  background: #f8fafc;
+  border: 1px solid #e2e9ef;
+  border-radius: 13px;
+  text-align: left;
+}
+
+.agenda-list-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  background: var(--blue-100);
+  border-radius: 12px;
+}
+
+.agenda-list-date b {
+  color: var(--navy-900);
+  font-size: 16px;
+}
+
+.agenda-list-date span {
+  color: var(--blue-700);
+  font-size: 7px;
+  font-weight: 900;
+}
+
+.agenda-list-main {
+  min-width: 0;
+}
+
+.agenda-list-main strong,
+.agenda-list-main small,
+.agenda-list-main span {
+  display: block;
+}
+
+.agenda-list-main strong { color: var(--navy-900); font-size: 11px; line-height: 1.3; }
+.agenda-list-main small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.agenda-list-main span { margin-top: 3px; color: #536679; font-size: 8px; }
+.agenda-list-arrow { color: var(--blue-600); font-size: 20px; font-weight: 900; }
+
+.history-month-card,
+.archive-folder-card,
+.agenda-resource-row {
+  display: grid;
+  align-items: center;
+  width: 100%;
+  color: var(--text);
+  background: #f8fafc;
+  border: 1px solid #e2e9ef;
+  border-radius: 13px;
+  text-align: left;
+}
+
+.history-month-card {
+  grid-template-columns: 34px 1fr 18px;
+  gap: 9px;
+  padding: 11px;
+}
+
+.history-month-card strong,
+.history-month-card small { display:block; }
+.history-month-card strong { color:var(--navy-900); font-size:10px; }
+.history-month-card small { margin-top:2px; color:var(--muted); font-size:8px; }
+
+.agenda-detail-box {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.agenda-detail-box > div {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  background: #f7f9fb;
+  border-radius: 11px;
+  text-align: left;
+}
+
+.agenda-detail-box p { margin:0; }
+.agenda-detail-box small,
+.agenda-detail-box strong { display:block; }
+.agenda-detail-box small { color:var(--muted); font-size:8px; }
+.agenda-detail-box strong { margin-top:2px; color:var(--navy-900); font-size:10px; }
+
+.agenda-resource-row {
+  grid-template-columns: 32px 1fr 18px;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding: 9px 10px;
+}
+
+.agenda-resource-row strong,
+.agenda-resource-row small { display:block; }
+.agenda-resource-row strong { color:var(--navy-900); font-size:9px; }
+.agenda-resource-row small { margin-top:2px; color:var(--muted); font-size:8px; }
+
+.archive-folder-card {
+  grid-template-columns: 40px minmax(0,1fr) 18px;
+  gap: 9px;
+  padding: 11px;
+}
+
+.archive-folder-icon {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:40px;
+  height:40px;
+  background:var(--gold-100);
+  border-radius:11px;
+  font-size:18px;
+}
+
+.archive-folder-card strong,
+.archive-folder-card small,
+.archive-folder-card p { display:block; margin:0; }
+.archive-folder-card strong { color:var(--navy-900); font-size:10px; }
+.archive-folder-card small { margin-top:3px; color:var(--muted); font-size:8px; }
+.archive-folder-card p { margin-top:4px; color:#617287; font-size:8px; line-height:1.35; }
+
+.public-announcement-card {
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e9ef;
+  border-radius: 13px;
+  text-align: left;
+}
+
+.public-announcement-card strong,
+.public-announcement-card small { display:block; }
+.public-announcement-card strong { margin-top:5px; color:var(--navy-900); font-size:11px; }
+.public-announcement-card small { margin-top:3px; color:var(--muted); font-size:8px; }
+.public-announcement-card p { margin:7px 0 0; color:#536679; font-size:9px; line-height:1.5; white-space:pre-wrap; }
+
+.prayer-grid {
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.prayer-time-item {
+  padding: 11px 5px;
+  background: #f6f8fb;
+  border: 1px solid #e3e9ef;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.prayer-time-item.next {
+  background: var(--green-100);
+  border-color: #bfe8d8;
+}
+
+.prayer-time-item small,
+.prayer-time-item strong { display:block; }
+.prayer-time-item small { color:var(--muted); font-size:8px; }
+.prayer-time-item strong { margin-top:4px; color:var(--navy-900); font-size:13px; }
+
+.prayer-source-note {
+  margin: 9px 0 12px;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: #f8fafc;
+  border-radius: 10px;
+  font-size: 8px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.kas-summary-card {
+  padding: 14px;
+  margin: 10px 0 12px;
+  background: linear-gradient(135deg, var(--navy-900), var(--blue-700));
+  border-radius: 16px;
+  color: #ffffff;
+  text-align: left;
+}
+
+.kas-summary-card small,
+.kas-summary-card strong,
+.kas-summary-card span { display:block; }
+.kas-summary-card small { opacity:.78; font-size:8px; }
+.kas-summary-card strong { margin:4px 0; font-size:20px; }
+.kas-summary-card span { opacity:.82; font-size:8px; line-height:1.4; }
+
+.qris-box {
+  padding: 13px;
+  background: #f8fafc;
+  border: 1px solid #e2e9ef;
+  border-radius: 15px;
+  text-align: center;
+}
+
+.qris-title {
+  margin-bottom: 9px;
+  color: var(--navy-900);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.qris-image {
+  display: block;
+  width: min(240px, 82%);
+  max-height: 300px;
+  object-fit: contain;
+  margin: 0 auto 9px;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid #dfe7ee;
+  border-radius: 12px;
+}
+
+.qris-box strong,
+.qris-box small { display:block; }
+.qris-box strong { color:var(--navy-900); font-size:10px; }
+.qris-box small { margin:5px 0 9px; color:var(--muted); font-size:8px; line-height:1.45; }
+
+.review-note-readonly {
+  display:block;
+  margin-top:8px;
+  color:var(--muted);
+  font-size:8px;
+}
+
+@media (max-width: 380px) {
+  .compact-detail-grid,
+  .compact-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .prayer-grid {
+    grid-template-columns: repeat(2,1fr);
+  }
+
+  .stack-mobile {
+    align-items: flex-start;
+  }
+}
