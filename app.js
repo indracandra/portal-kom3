@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.2.3
+   PORTAL KOM 3 - FRONTEND V1.2.4
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -20,10 +20,17 @@
    - Riwayat izin
    - Verifikasi izin
 
-   TAMBAHAN V1.2.3:
+   TAMBAHAN V1.2.3 TETAP:
    - Arsip Rapat & Materi
    - Materi / Notulen / Hasil Rapat / Dokumentasi
    - Link Drive/Docs/URL berbagi
+
+   TAMBAHAN V1.2.4:
+   - Mobile Compact UI (maks. 3-5 item awal)
+   - Agenda anggota: Akan Datang / Aktif / Riwayat
+   - Search, filter, tab, dan Muat lainnya
+   - Jadwal salat ringkas di dashboard
+   - Fondasi QRIS Kas dari pengaturan Portal
 ========================================================= */
 
 const APP_CONFIG = {
@@ -34,6 +41,35 @@ const APP_CONFIG = {
 let currentUser = null;
 let sessionToken = localStorage.getItem("kom3_token") || "";
 let toastTimer = null;
+let prayerWidgetData = null;
+
+const COMPACT_PAGE_SIZE = 5;
+
+const compactUI = {
+  users: { items: [], tab: "PENDING", query: "", visible: 5 },
+  agendaManager: { items: [], tab: "RENCANA", query: "", visible: 5 },
+  announcements: { items: [], tab: "AKTIF", query: "", visible: 5 },
+  publicAgenda: { items: [], documents: [], tab: "UPCOMING", visible: 3 },
+  archive: {
+    documents: [],
+    agendas: [],
+    isManager: false,
+    query: "",
+    type: "ALL",
+    year: "ALL",
+    visible: 5,
+    detailVisible: 5,
+    agendaFilter: "",
+    currentAgendaId: "",
+    title: "Arsip Rapat & Materi"
+  },
+  attendance: { items: [], agenda: null, tab: "BELUM", query: "", visible: 5 },
+  myAttendance: { items: [], visible: 5 },
+  leave: { agendas: [], history: [], filter: "ALL", visible: 5 },
+  leaveReview: { items: [], tab: "PENDING", query: "", visible: 5 },
+  publicAnnouncements: { items: [], visible: 5 },
+  portalSettings: null
+};
 
 
 /* =========================================================
@@ -236,8 +272,12 @@ async function loadDashboard() {
 
   updateProfileDisplay(res.user);
   updateStats(res.stats || {});
-  updateAgenda(res.agenda);
+  updateAgenda(res.nextAgenda || res.agenda);
   updateAnnouncements(res.pengumuman || []);
+
+  // Tidak menahan proses login. Jika API jadwal salat gagal,
+  // seluruh fungsi Portal tetap berjalan seperti V1.2.3.
+  loadPrayerWidget().catch(() => {});
 }
 
 function updateProfileDisplay(user) {
@@ -323,6 +363,13 @@ async function openAdminCenter() {
     }
 
     const s = res.summary || {};
+    const settingButton = currentUser.role === "Admin" ? `
+      <button type="button" class="admin-action" onclick="openPortalSettings()">
+        <span class="admin-action-icon">🎛️</span>
+        <span><b>Pengaturan Portal</b><small>QRIS Kas, lokasi jadwal salat, dan tahun ajaran</small></span>
+        <span>›</span>
+      </button>
+    ` : "";
 
     setModalHtml(`
       <div class="modal-handle"></div>
@@ -332,7 +379,7 @@ async function openAdminCenter() {
         <div class="modal-icon compact">⚙️</div>
         <div>
           <h3>Admin Center</h3>
-          <p class="modal-subtitle">Kelola anggota, kehadiran, dan izin.</p>
+          <p class="modal-subtitle">Ringkas di depan, detail hanya saat diperlukan.</p>
         </div>
       </div>
 
@@ -343,16 +390,16 @@ async function openAdminCenter() {
         ${adminStatCard("Izin Menunggu", s.pendingLeaves || 0, "📝")}
       </div>
 
-      <div class="admin-menu-list">
+      <div class="admin-menu-list compact-admin-menu">
         <button type="button" class="admin-action" onclick="openUserCenter()">
           <span class="admin-action-icon">👥</span>
-          <span><b>Manajemen Anggota</b><small>Aktivasi akun, role, dan jabatan</small></span>
+          <span><b>Manajemen Anggota</b><small>Cari, filter, aktivasi, role, dan password</small></span>
           <span>›</span>
         </button>
 
         <button type="button" class="admin-action" onclick="openAttendanceManager()">
           <span class="admin-action-icon">✅</span>
-          <span><b>Absensi Pertemuan</b><small>Catat kehadiran anggota</small></span>
+          <span><b>Absensi Pertemuan</b><small>Prioritas anggota yang belum tercatat</small></span>
           <span>›</span>
         </button>
 
@@ -376,9 +423,11 @@ async function openAdminCenter() {
 
         <button type="button" class="admin-action" onclick="openMeetingArchive()">
           <span class="admin-action-icon">🗂️</span>
-          <span><b>Arsip Rapat & Materi</b><small>Materi, notulen, hasil rapat, dan dokumentasi</small></span>
+          <span><b>Arsip Rapat & Materi</b><small>Arsip per kegiatan, tidak menumpuk panjang</small></span>
           <span>›</span>
         </button>
+
+        ${settingButton}
       </div>
 
       <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
@@ -418,35 +467,14 @@ async function openUserCenter() {
       return;
     }
 
-    const pendingUsers = res.users.filter(u => String(u.status).toUpperCase() === "PENDING");
-    const activeUsers = res.users.filter(u => String(u.status).toUpperCase() === "ACTIVE");
+    compactUI.users.items = res.users || [];
+    compactUI.users.query = "";
+    compactUI.users.visible = COMPACT_PAGE_SIZE;
 
-    let html = `
-      <div class="modal-handle"></div>
-      <button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <h3>Manajemen Anggota</h3>
-      <p class="modal-subtitle">Aktifkan anggota baru dan kelola kepengurusan.</p>
+    const pending = compactUI.users.items.filter(u => String(u.status).toUpperCase() === "PENDING").length;
+    compactUI.users.tab = pending ? "PENDING" : "ACTIVE";
 
-      <div class="section-mini-title">Menunggu Aktivasi (${pendingUsers.length})</div>
-    `;
-
-    if (!pendingUsers.length) {
-      html += `<div class="empty-panel">Tidak ada akun menunggu aktivasi.</div>`;
-    }
-
-    pendingUsers.forEach(user => {
-      html += userCardHtml(user, true);
-    });
-
-    html += `<div class="section-mini-title top-gap">Anggota Aktif (${activeUsers.length})</div>`;
-
-    activeUsers.forEach(user => {
-      html += userCardHtml(user, false);
-    });
-
-    html += `<button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>`;
-
-    setModalHtml(html);
+    renderUserCenterModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -617,85 +645,17 @@ async function openAgendaManager() {
       return;
     }
 
-    let listHtml = "";
+    compactUI.agendaManager.items = res.agendas || [];
+    compactUI.agendaManager.query = "";
+    compactUI.agendaManager.visible = COMPACT_PAGE_SIZE;
 
-    if (!res.agendas.length) {
-      listHtml = `<div class="empty-panel">Belum ada agenda.</div>`;
+    if (compactUI.agendaManager.items.some(x => String(x.status).toUpperCase() === "AKTIF")) {
+      compactUI.agendaManager.tab = "AKTIF";
+    } else {
+      compactUI.agendaManager.tab = "RENCANA";
     }
 
-    res.agendas.forEach(item => {
-      const nextStatus = item.status === "AKTIF" ? "SELESAI" : "AKTIF";
-      const buttonText = item.status === "AKTIF" ? "Tandai Selesai" : "Jadikan Aktif";
-
-      listHtml += `
-        <div class="management-card">
-          <div class="management-card-head">
-            <div>
-              <strong>${escapeHtml(item.nama)}</strong>
-              <small>${escapeHtml(item.tanggal)} • ${escapeHtml(item.jam)}</small>
-              <small>${escapeHtml(item.moda)} • ${escapeHtml(item.lokasi)}</small>
-            </div>
-            <span class="status-pill ${agendaStatusClass(item.status)}">${escapeHtml(item.status)}</span>
-          </div>
-
-          <button
-            type="button"
-            class="outline-button"
-            onclick="setAgendaStatus('${escapeJs(item.id)}','${escapeJs(nextStatus)}')"
-          >
-            ${buttonText}
-          </button>
-        </div>
-      `;
-    });
-
-    setModalHtml(`
-      <div class="modal-handle"></div>
-      <button class="modal-close" type="button" onclick="closeModal()">×</button>
-
-      <h3>Agenda MGMP</h3>
-      <p class="modal-subtitle">Tambah agenda dan tentukan agenda yang sedang aktif.</p>
-
-      <form id="agendaManagerForm" class="manager-form" onsubmit="saveAgendaFromModal(event)">
-        <label class="modal-label">Nama Kegiatan</label>
-        <input id="agendaName" class="portal-input" type="text" placeholder="Contoh: Hari Belajar Guru Oktober" required>
-
-        <div class="two-col-inputs">
-          <div>
-            <label class="modal-label">Tanggal</label>
-            <input id="agendaDate" class="portal-input" type="date" required>
-          </div>
-          <div>
-            <label class="modal-label">Moda</label>
-            <select id="agendaMode" class="portal-select full">
-              <option value="Luring">Luring</option>
-              <option value="Daring">Daring</option>
-              <option value="Hybrid">Hybrid</option>
-            </select>
-          </div>
-        </div>
-
-        <label class="modal-label">Jam</label>
-        <input id="agendaTime" class="portal-input" type="text" placeholder="Contoh: 13.00 - 15.00 WIB" required>
-
-        <label class="modal-label">Lokasi / Media</label>
-        <input id="agendaLocation" class="portal-input" type="text" placeholder="Lokasi atau link/media daring" required>
-
-        <label class="modal-label">Status</label>
-        <select id="agendaStatus" class="portal-select full">
-          <option value="RENCANA">Rencana</option>
-          <option value="AKTIF">Aktif</option>
-          <option value="SELESAI">Selesai</option>
-        </select>
-
-        <button id="agendaSaveButton" type="submit" class="primary-button">+ TAMBAH AGENDA</button>
-      </form>
-
-      <div class="section-mini-title top-gap">Daftar Agenda</div>
-      ${listHtml}
-
-      <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
-    `);
+    renderAgendaManagerModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -781,84 +741,12 @@ async function openAnnouncementManager() {
       return;
     }
 
-    let listHtml = "";
+    compactUI.announcements.items = res.announcements || [];
+    compactUI.announcements.query = "";
+    compactUI.announcements.visible = COMPACT_PAGE_SIZE;
+    compactUI.announcements.tab = "AKTIF";
 
-    if (!res.announcements.length) {
-      listHtml = `<div class="empty-panel">Belum ada pengumuman.</div>`;
-    }
-
-    res.announcements.forEach(item => {
-      const nextStatus = item.status === "AKTIF" ? "NONAKTIF" : "AKTIF";
-      const buttonText = item.status === "AKTIF" ? "Nonaktifkan" : "Aktifkan";
-
-      listHtml += `
-        <div class="management-card">
-          <div class="management-card-head">
-            <div>
-              <strong>${escapeHtml(item.judul)}</strong>
-              <small>${escapeHtml(item.kategori)} • ${escapeHtml(item.tanggal)}</small>
-            </div>
-            <span class="status-pill ${item.status === "AKTIF" ? "approved" : "neutral"}">${escapeHtml(item.status)}</span>
-          </div>
-
-          <p class="manager-item-text">${escapeHtml(item.isi)}</p>
-
-          <button
-            type="button"
-            class="outline-button"
-            onclick="setAnnouncementStatus('${escapeJs(item.id)}','${escapeJs(nextStatus)}')"
-          >
-            ${buttonText}
-          </button>
-        </div>
-      `;
-    });
-
-    setModalHtml(`
-      <div class="modal-handle"></div>
-      <button class="modal-close" type="button" onclick="closeModal()">×</button>
-
-      <h3>Pengumuman</h3>
-      <p class="modal-subtitle">Tambah informasi resmi yang tampil pada dashboard anggota.</p>
-
-      <form id="announcementManagerForm" class="manager-form" onsubmit="saveAnnouncementFromModal(event)">
-        <label class="modal-label">Judul</label>
-        <input id="announcementTitle" class="portal-input" type="text" placeholder="Judul pengumuman" required>
-
-        <div class="two-col-inputs">
-          <div>
-            <label class="modal-label">Kategori</label>
-            <select id="announcementCategory" class="portal-select full">
-              <option value="Umum">Umum</option>
-              <option value="Penting">Penting</option>
-              <option value="Agenda">Agenda</option>
-              <option value="Hari Belajar Guru">Hari Belajar Guru</option>
-              <option value="FLS">FLS</option>
-            </select>
-          </div>
-          <div>
-            <label class="modal-label">Tanggal</label>
-            <input id="announcementDate" class="portal-input" type="date">
-          </div>
-        </div>
-
-        <label class="modal-label">Isi Pengumuman</label>
-        <textarea id="announcementBody" class="portal-textarea" rows="4" placeholder="Tulis isi pengumuman..." required></textarea>
-
-        <label class="modal-label">Status</label>
-        <select id="announcementStatus" class="portal-select full">
-          <option value="AKTIF">Aktif</option>
-          <option value="NONAKTIF">Nonaktif</option>
-        </select>
-
-        <button id="announcementSaveButton" type="submit" class="primary-button">+ TAMBAH PENGUMUMAN</button>
-      </form>
-
-      <div class="section-mini-title top-gap">Pengumuman Tersimpan</div>
-      ${listHtml}
-
-      <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
-    `);
+    renderAnnouncementManagerModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -937,152 +825,18 @@ async function openMeetingArchive(options = {}) {
       return;
     }
 
-    const agendas = res.agendas || [];
-    let documents = res.documents || [];
+    compactUI.archive.documents = res.documents || [];
+    compactUI.archive.agendas = res.agendas || [];
+    compactUI.archive.isManager = !!res.isManager;
+    compactUI.archive.query = "";
+    compactUI.archive.type = "ALL";
+    compactUI.archive.year = "ALL";
+    compactUI.archive.visible = COMPACT_PAGE_SIZE;
+    compactUI.archive.detailVisible = COMPACT_PAGE_SIZE;
+    compactUI.archive.agendaFilter = agendaFilter;
+    compactUI.archive.title = title;
 
-    if (agendaFilter) {
-      documents = documents.filter(
-        item => item.agendaId === agendaFilter
-      );
-    }
-
-    let agendaOptions = `
-      <option value="">Pilih agenda/kegiatan...</option>
-    `;
-
-    agendas.forEach(item => {
-      agendaOptions += `
-        <option value="${escapeHtml(item.id)}">
-          ${escapeHtml(item.tanggal)} — ${escapeHtml(item.nama)}
-        </option>
-      `;
-    });
-
-    let managerForm = "";
-
-    if (res.isManager) {
-      managerForm = `
-        <div class="archive-manager-box">
-          <div class="section-mini-title">Tambah Arsip Rapat</div>
-
-          <form id="meetingArchiveForm" onsubmit="saveMeetingDocumentFromModal(event)">
-            <label class="modal-label">Agenda / Kegiatan</label>
-            <select id="meetingDocAgenda" class="portal-select full" required>
-              ${agendaOptions}
-            </select>
-
-            <div class="two-col-inputs">
-              <div>
-                <label class="modal-label">Jenis</label>
-                <select id="meetingDocType" class="portal-select full" required>
-                  <option value="MATERI">Materi</option>
-                  <option value="NOTULEN">Notulen</option>
-                  <option value="HASIL_RAPAT">Hasil Rapat</option>
-                  <option value="DOKUMENTASI">Dokumentasi</option>
-                </select>
-              </div>
-
-              <div>
-                <label class="modal-label">Tanggal</label>
-                <input id="meetingDocDate" class="portal-input" type="date">
-              </div>
-            </div>
-
-            <label class="modal-label">Judul</label>
-            <input
-              id="meetingDocTitle"
-              class="portal-input"
-              type="text"
-              placeholder="Contoh: Materi Program Kerja Semester 1"
-              required
-            >
-
-            <label class="modal-label">Ringkasan / Deskripsi</label>
-            <textarea
-              id="meetingDocDescription"
-              class="portal-textarea"
-              rows="4"
-              placeholder="Ringkasan materi, keputusan rapat, tindak lanjut, atau keterangan dokumen..."
-            ></textarea>
-
-            <label class="modal-label">Link Berbagi</label>
-            <input
-              id="meetingDocLink"
-              class="portal-input"
-              type="url"
-              placeholder="https://drive.google.com/..."
-            >
-
-            <div class="file-note">
-              Gunakan link Google Drive/Docs/Slides/YouTube atau URL lain yang dapat diakses anggota.
-            </div>
-
-            <label class="modal-label">Status</label>
-            <select id="meetingDocStatus" class="portal-select full">
-              <option value="AKTIF">Aktif</option>
-              <option value="NONAKTIF">Nonaktif</option>
-            </select>
-
-            <button
-              id="meetingDocSaveButton"
-              type="submit"
-              class="primary-button"
-            >
-              + SIMPAN ARSIP
-            </button>
-          </form>
-        </div>
-      `;
-    }
-
-    const archiveHtml = renderMeetingArchiveList(
-      documents,
-      res.isManager
-    );
-
-    setModalHtml(`
-      <div class="modal-handle"></div>
-
-      <button
-        class="modal-close"
-        type="button"
-        onclick="closeModal()"
-      >
-        ×
-      </button>
-
-      <div class="modal-title-row">
-        <div class="modal-icon compact">🗂️</div>
-        <div>
-          <h3>${escapeHtml(title)}</h3>
-          <p class="modal-subtitle">
-            Materi, notulen, hasil rapat, dan dokumentasi MGMP.
-          </p>
-        </div>
-      </div>
-
-      ${managerForm}
-
-      <div class="section-mini-title ${res.isManager ? "top-gap" : ""}">
-        Arsip Tersimpan
-      </div>
-
-      ${archiveHtml}
-
-      <button
-        class="secondary-button"
-        type="button"
-        onclick="closeModal()"
-      >
-        Tutup
-      </button>
-    `);
-
-    if (agendaFilter) {
-      const select = document.getElementById("meetingDocAgenda");
-      if (select) select.value = agendaFilter;
-    }
-
+    renderMeetingArchiveModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -1091,116 +845,25 @@ async function openMeetingArchive(options = {}) {
 
 
 function renderMeetingArchiveList(documents, isManager) {
+  // Dipertahankan sebagai helper kompatibilitas V1.2.3.
+  // V1.2.4 menggunakan renderMeetingArchiveModal() agar daftar tidak memanjang.
   if (!documents || !documents.length) {
-    return `
-      <div class="empty-panel">
-        Belum ada materi/notulen/hasil rapat yang tersimpan.
-      </div>
-    `;
+    return `<div class="empty-panel">Belum ada arsip tersimpan.</div>`;
   }
 
-  const groups = {};
-
-  documents.forEach(item => {
-    const key = item.agendaId || "LAINNYA";
-
-    if (!groups[key]) {
-      groups[key] = {
-        agendaNama: item.agendaNama || "Kegiatan MGMP",
-        agendaTanggal: item.agendaTanggal || "",
-        items: []
-      };
-    }
-
-    groups[key].items.push(item);
-  });
-
-  let html = "";
-
-  Object.keys(groups).forEach(key => {
-    const group = groups[key];
-
-    html += `
-      <div class="archive-agenda-group">
-        <div class="archive-agenda-head">
-          <div>
-            <strong>${escapeHtml(group.agendaNama)}</strong>
-            <small>${escapeHtml(group.agendaTanggal)}</small>
-          </div>
-          <span class="archive-count">${group.items.length}</span>
+  return documents.slice(0, COMPACT_PAGE_SIZE).map(item => `
+    <div class="archive-card">
+      <div class="archive-card-top">
+        <span class="archive-type-icon">${documentTypeIcon(item.jenis)}</span>
+        <div class="archive-card-title">
+          <span class="archive-type-label">${escapeHtml(formatDocumentType(item.jenis))}</span>
+          <strong>${escapeHtml(item.judul)}</strong>
+          <small>${escapeHtml(item.tanggal)}</small>
         </div>
-    `;
-
-    group.items.forEach(item => {
-      const jenis = formatDocumentType(item.jenis);
-      const icon = documentTypeIcon(item.jenis);
-      const nextStatus = item.status === "AKTIF" ? "NONAKTIF" : "AKTIF";
-      const toggleText = item.status === "AKTIF" ? "Nonaktifkan" : "Aktifkan";
-
-      html += `
-        <div class="archive-card">
-          <div class="archive-card-top">
-            <span class="archive-type-icon">${icon}</span>
-
-            <div class="archive-card-title">
-              <span class="archive-type-label">${escapeHtml(jenis)}</span>
-              <strong>${escapeHtml(item.judul)}</strong>
-              <small>
-                ${escapeHtml(item.tanggal)}
-                ${item.dibuatOleh ? " • " + escapeHtml(item.dibuatOleh) : ""}
-              </small>
-            </div>
-
-            ${
-              isManager
-                ? `<span class="status-pill ${item.status === "AKTIF" ? "approved" : "neutral"}">${escapeHtml(item.status)}</span>`
-                : ""
-            }
-          </div>
-
-          ${
-            item.deskripsi
-              ? `<p class="archive-description">${escapeHtml(item.deskripsi)}</p>`
-              : ""
-          }
-
-          <div class="archive-actions">
-            ${
-              item.link
-                ? `
-                  <button
-                    type="button"
-                    class="archive-open-button"
-                    onclick="openExternalLink('${escapeJs(item.link)}')"
-                  >
-                    🔗 Buka Link
-                  </button>
-                `
-                : `<span class="archive-no-link">Tanpa link</span>`
-            }
-
-            ${
-              isManager
-                ? `
-                  <button
-                    type="button"
-                    class="archive-toggle-button"
-                    onclick="setMeetingDocumentStatus('${escapeJs(item.id)}','${escapeJs(nextStatus)}')"
-                  >
-                    ${toggleText}
-                  </button>
-                `
-                : ""
-            }
-          </div>
-        </div>
-      `;
-    });
-
-    html += `</div>`;
-  });
-
-  return html;
+        ${isManager ? `<span class="status-pill ${item.status === "AKTIF" ? "approved" : "neutral"}">${escapeHtml(item.status)}</span>` : ""}
+      </div>
+    </div>
+  `).join("");
 }
 
 
@@ -1273,9 +936,32 @@ async function setMeetingDocumentStatus(id, status) {
 
 
 async function openAgendaPublic() {
-  await openMeetingArchive({
-    title: "Agenda & Hasil Kegiatan"
-  });
+  showLoadingModal("Agenda MGMP");
+
+  try {
+    const [agendaRes, archiveRes] = await Promise.all([
+      apiRequest("listAgendasPublic", { token: sessionToken }),
+      apiRequest("listMeetingDocuments", { token: sessionToken })
+    ]);
+
+    if (!agendaRes.success) {
+      showToast(agendaRes.message);
+      closeModal();
+      return;
+    }
+
+    compactUI.publicAgenda.items = agendaRes.agendas || [];
+    compactUI.publicAgenda.documents = archiveRes.success ? archiveRes.documents || [] : [];
+    compactUI.publicAgenda.visible = 3;
+
+    const hasActive = compactUI.publicAgenda.items.some(x => String(x.status).toUpperCase() === "AKTIF");
+    compactUI.publicAgenda.tab = hasActive ? "ACTIVE" : "UPCOMING";
+
+    renderPublicAgendaModal();
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
 }
 
 
@@ -1344,47 +1030,13 @@ async function openAttendanceManager() {
       return;
     }
 
-    let html = `
-      <div class="modal-handle"></div>
-      <button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <h3>Absensi Pertemuan</h3>
-      <p class="modal-subtitle">
-        <b>${escapeHtml(res.agenda.nama)}</b><br>
-        ${escapeHtml(res.agenda.tanggal)} • ${escapeHtml(res.agenda.jam)}
-      </p>
-      <div class="list-scroll">
-    `;
+    compactUI.attendance.items = res.users || [];
+    compactUI.attendance.agenda = res.agenda || null;
+    compactUI.attendance.tab = "BELUM";
+    compactUI.attendance.query = "";
+    compactUI.attendance.visible = COMPACT_PAGE_SIZE;
 
-    res.users.forEach(user => {
-      const status = String(user.statusAbsen || "").toUpperCase();
-
-      let actionHtml = `
-        <button type="button" class="attendance-button" onclick="markPresent('${escapeJs(user.id)}')">
-          HADIR
-        </button>
-      `;
-
-      if (status) {
-        actionHtml = `<span class="attendance-status ${attendanceStatusClass(status)}">${statusIcon(status)} ${escapeHtml(status)}</span>`;
-      }
-
-      html += `
-        <div class="attendance-row">
-          <div>
-            <strong>${escapeHtml(user.nama)}</strong>
-            <small>${escapeHtml(user.sekolah)}</small>
-          </div>
-          ${actionHtml}
-        </div>
-      `;
-    });
-
-    html += `
-      </div>
-      <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
-    `;
-
-    setModalHtml(html);
+    renderAttendanceManagerModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -1425,33 +1077,9 @@ async function openMyAttendance() {
       return;
     }
 
-    let html = `
-      <div class="modal-handle"></div>
-      <button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <h3>Kehadiran Saya</h3>
-      <p class="modal-subtitle">Riwayat kehadiran dan status izin/dinas.</p>
-    `;
-
-    if (!res.history.length) {
-      html += `<div class="empty-panel">Belum ada riwayat kehadiran.</div>`;
-    }
-
-    res.history.forEach(item => {
-      const status = String(item.status || "").toUpperCase();
-
-      html += `
-        <div class="history-card">
-          <div class="history-topline">
-            <strong>${escapeHtml(item.agenda)}</strong>
-            <span class="attendance-status ${attendanceStatusClass(status)}">${statusIcon(status)} ${escapeHtml(status)}</span>
-          </div>
-          <small>${escapeHtml(item.tanggal)} • ${escapeHtml(item.jam)}</small>
-        </div>
-      `;
-    });
-
-    html += `<button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>`;
-    setModalHtml(html);
+    compactUI.myAttendance.items = res.history || [];
+    compactUI.myAttendance.visible = COMPACT_PAGE_SIZE;
+    renderMyAttendanceModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -1478,75 +1106,12 @@ async function openLeaveCenter() {
       return;
     }
 
-    const agendas = agendaRes.agendas || [];
-    const history = leaveRes.success ? leaveRes.history || [] : [];
+    compactUI.leave.agendas = agendaRes.agendas || [];
+    compactUI.leave.history = leaveRes.success ? leaveRes.history || [] : [];
+    compactUI.leave.filter = "ALL";
+    compactUI.leave.visible = COMPACT_PAGE_SIZE;
 
-    let agendaOptions = `<option value="">Pilih kegiatan...</option>`;
-
-    agendas.forEach(item => {
-      agendaOptions += `
-        <option value="${escapeHtml(item.id)}">
-          ${escapeHtml(item.tanggal)} — ${escapeHtml(item.nama)}
-        </option>
-      `;
-    });
-
-    let historyHtml = "";
-
-    if (!history.length) {
-      historyHtml = `<div class="empty-panel">Belum ada riwayat izin.</div>`;
-    } else {
-      history.slice(0, 8).forEach(item => {
-        historyHtml += `
-          <div class="history-card">
-            <div class="history-topline">
-              <strong>${escapeHtml(item.agenda)}</strong>
-              <span class="status-pill ${leaveStatusClass(item.status)}">${leaveStatusLabel(item.status)}</span>
-            </div>
-            <small>${escapeHtml(item.jenisIzin)} • ${escapeHtml(item.tanggalKirim)}</small>
-            <p>${escapeHtml(item.keterangan)}</p>
-            ${item.catatan ? `<small>Catatan: ${escapeHtml(item.catatan)}</small>` : ""}
-          </div>
-        `;
-      });
-    }
-
-    setModalHtml(`
-      <div class="modal-handle"></div>
-      <button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <h3>Izin Tidak Hadir</h3>
-      <p class="modal-subtitle">Kirim izin dan pantau status verifikasinya.</p>
-
-      <form id="leaveForm" onsubmit="submitLeaveFromModal(event)">
-        <label class="modal-label">Kegiatan</label>
-        <select id="leaveAgenda" class="portal-select full" required>
-          ${agendaOptions}
-        </select>
-
-        <label class="modal-label">Jenis Izin</label>
-        <select id="leaveType" class="portal-select full" required>
-          <option value="SAKIT">Sakit</option>
-          <option value="DINAS">Dinas</option>
-          <option value="KELUARGA">Kepentingan Keluarga</option>
-          <option value="LAINNYA">Lainnya</option>
-        </select>
-
-        <label class="modal-label">Keterangan</label>
-        <textarea id="leaveDescription" class="portal-textarea" rows="3" placeholder="Tuliskan alasan singkat..." required></textarea>
-
-        <label class="modal-label">Bukti Foto / Surat <span class="optional-text">opsional, maks. 2 MB</span></label>
-        <input id="leaveFile" class="portal-file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf">
-
-        <div class="file-note">Format: JPG, PNG, WEBP, atau PDF.</div>
-
-        <button id="leaveSubmitButton" type="submit" class="primary-button">KIRIM IZIN</button>
-      </form>
-
-      <div class="section-mini-title top-gap">Riwayat Izin</div>
-      ${historyHtml}
-
-      <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
-    `);
+    renderLeaveCenterModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -1642,7 +1207,7 @@ async function openLeaveReview() {
   showLoadingModal("Verifikasi Izin");
 
   try {
-    const res = await apiRequest("pendingLeaves", {
+    const res = await apiRequest("listLeavesManager", {
       token: sessionToken
     });
 
@@ -1652,51 +1217,14 @@ async function openLeaveReview() {
       return;
     }
 
-    let html = `
-      <div class="modal-handle"></div>
-      <button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <h3>Verifikasi Izin</h3>
-      <p class="modal-subtitle">Periksa pengajuan izin anggota.</p>
-    `;
+    compactUI.leaveReview.items = res.leaves || [];
+    compactUI.leaveReview.query = "";
+    compactUI.leaveReview.visible = COMPACT_PAGE_SIZE;
+    compactUI.leaveReview.tab = compactUI.leaveReview.items.some(x => String(x.status).toUpperCase() === "PENDING")
+      ? "PENDING"
+      : "APPROVED";
 
-    if (!res.leaves.length) {
-      html += `<div class="empty-panel">Tidak ada izin menunggu verifikasi.</div>`;
-    }
-
-    res.leaves.forEach(item => {
-      html += `
-        <div class="management-card">
-          <div class="management-card-head">
-            <div>
-              <strong>${escapeHtml(item.nama)}</strong>
-              <small>${escapeHtml(item.sekolah)}</small>
-            </div>
-            <span class="status-pill pending">PENDING</span>
-          </div>
-
-          <div class="leave-detail">
-            <b>${escapeHtml(item.agenda)}</b>
-            <span>${escapeHtml(item.jenisIzin)} • ${escapeHtml(item.tanggalKirim)}</span>
-            <p>${escapeHtml(item.keterangan)}</p>
-          </div>
-
-          ${item.hasBukti ? `
-            <button type="button" class="proof-link proof-button" onclick="openLeaveProof('${escapeJs(item.id)}')">📎 Lihat Bukti</button>
-          ` : `<div class="file-note">Tidak ada bukti yang diunggah.</div>`}
-
-          <textarea id="review-note-${escapeHtml(item.id)}" class="portal-textarea" rows="2" placeholder="Catatan verifikasi (opsional)"></textarea>
-
-          <div class="review-buttons">
-            <button type="button" class="approve-button" onclick="reviewLeave('${escapeJs(item.id)}','APPROVE')">✓ Setujui</button>
-            <button type="button" class="reject-button" onclick="reviewLeave('${escapeJs(item.id)}','REJECT')">✕ Tolak</button>
-          </div>
-        </div>
-      `;
-    });
-
-    html += `<button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>`;
-
-    setModalHtml(html);
+    renderLeaveReviewModal();
   } catch (err) {
     showToast(err.message);
     closeModal();
@@ -1774,6 +1302,965 @@ async function reviewLeave(izinId, decision) {
 }
 
 
+
+/* =========================================================
+   V1.2.4 - MOBILE COMPACT UI HELPERS
+========================================================= */
+
+function compactTabButton(label, value, active, count, onclickName) {
+  return `
+    <button
+      type="button"
+      class="compact-tab ${active === value ? "active" : ""}"
+      onclick="${onclickName}('${escapeJs(value)}')"
+    >
+      ${escapeHtml(label)}${count == null ? "" : ` <b>${escapeHtml(String(count))}</b>`}
+    </button>
+  `;
+}
+
+
+function compactSearchHtml(value, handler, placeholder) {
+  return `
+    <div class="compact-search-wrap">
+      <span>🔎</span>
+      <input
+        class="compact-search"
+        type="search"
+        value="${escapeHtml(value || "")}"
+        placeholder="${escapeHtml(placeholder || "Cari...")}"
+        oninput="${handler}(this.value)"
+      >
+    </div>
+  `;
+}
+
+
+function renderLoadMoreButton(hasMore, onclickName, label = "Muat 5 lainnya") {
+  if (!hasMore) return "";
+  return `<button type="button" class="compact-more-button" onclick="${onclickName}()">${escapeHtml(label)}</button>`;
+}
+
+function refocusCompactSearch() {
+  requestAnimationFrame(() => {
+    const input = document.querySelector("#featureModal .compact-search");
+    if (!input) return;
+    input.focus();
+    try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
+  });
+}
+
+
+/* -------------------------
+   USER CENTER COMPACT
+------------------------- */
+
+function renderUserCenterModal() {
+  const all = compactUI.users.items || [];
+  const pendingCount = all.filter(u => String(u.status).toUpperCase() === "PENDING").length;
+  const activeCount = all.filter(u => String(u.status).toUpperCase() === "ACTIVE").length;
+  const pengurusCount = all.filter(u => String(u.status).toUpperCase() === "ACTIVE" && u.role === "Pengurus").length;
+  const query = String(compactUI.users.query || "").toLowerCase();
+
+  let filtered = all.filter(user => {
+    const status = String(user.status || "").toUpperCase();
+    if (compactUI.users.tab === "PENDING" && status !== "PENDING") return false;
+    if (compactUI.users.tab === "ACTIVE" && status !== "ACTIVE") return false;
+    if (compactUI.users.tab === "PENGURUS" && !(status === "ACTIVE" && user.role === "Pengurus")) return false;
+
+    if (!query) return true;
+    return [user.nama, user.sekolah, user.username, user.email]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+
+  const visible = filtered.slice(0, compactUI.users.visible);
+  let listHtml = visible.map(user => `
+    <div class="compact-row-card">
+      <div class="compact-row-main">
+        <strong>${escapeHtml(user.nama)}</strong>
+        <small>${escapeHtml(user.sekolah || "-")}</small>
+        <span>${escapeHtml(user.role)} • ${escapeHtml(user.jabatan || "Anggota")}</span>
+      </div>
+      <button type="button" class="compact-detail-button" onclick="openUserDetail('${escapeJs(user.id)}')">Detail ›</button>
+    </div>
+  `).join("");
+
+  if (!listHtml) listHtml = `<div class="empty-panel">Tidak ada data pada filter ini.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Manajemen Anggota</h3>
+    <p class="modal-subtitle">Tampilkan seperlunya. Gunakan pencarian atau filter untuk data lama.</p>
+
+    ${compactSearchHtml(compactUI.users.query, "filterUserCenter", "Cari nama, sekolah, username...")}
+
+    <div class="compact-tabs">
+      ${compactTabButton("Menunggu", "PENDING", compactUI.users.tab, pendingCount, "setUserCenterTab")}
+      ${compactTabButton("Aktif", "ACTIVE", compactUI.users.tab, activeCount, "setUserCenterTab")}
+      ${compactTabButton("Pengurus", "PENGURUS", compactUI.users.tab, pengurusCount, "setUserCenterTab")}
+    </div>
+
+    <div class="compact-list">${listHtml}</div>
+    ${renderLoadMoreButton(filtered.length > compactUI.users.visible, "loadMoreUsers")}
+
+    <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+  `);
+}
+
+
+function setUserCenterTab(tab) {
+  compactUI.users.tab = tab;
+  compactUI.users.visible = COMPACT_PAGE_SIZE;
+  renderUserCenterModal();
+}
+
+
+function filterUserCenter(query) {
+  compactUI.users.query = query || "";
+  compactUI.users.visible = COMPACT_PAGE_SIZE;
+  renderUserCenterModal();
+  const input = document.querySelector(".compact-search");
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+
+function loadMoreUsers() {
+  compactUI.users.visible += COMPACT_PAGE_SIZE;
+  renderUserCenterModal();
+}
+
+
+function openUserDetail(userId) {
+  const user = (compactUI.users.items || []).find(x => x.id === userId);
+  if (!user) return;
+
+  let controls = "";
+
+  if (String(user.status).toUpperCase() === "PENDING") {
+    controls += `
+      <button type="button" class="primary-button" onclick="approveMember('${escapeJs(user.id)}')">✓ Aktifkan Anggota</button>
+    `;
+  }
+
+  if (currentUser && currentUser.role === "Admin" && user.id !== currentUser.id) {
+    controls += `
+      <div class="two-col-inputs">
+        <select id="role-${escapeHtml(user.id)}" class="portal-select">
+          <option value="Anggota" ${user.role === "Anggota" ? "selected" : ""}>Anggota</option>
+          <option value="Pengurus" ${user.role === "Pengurus" ? "selected" : ""}>Pengurus</option>
+        </select>
+        <select id="jabatan-${escapeHtml(user.id)}" class="portal-select">${jabatanOptions(user.jabatan)}</select>
+      </div>
+      <button type="button" class="outline-button" onclick="saveUserRole('${escapeJs(user.id)}')">Simpan Role & Jabatan</button>
+      <button type="button" class="outline-button password-reset-button" onclick="resetMemberPassword('${escapeJs(user.id)}','${escapeJs(user.nama)}')">🔑 Reset Password</button>
+    `;
+  }
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header">
+      <button type="button" class="compact-back-button" onclick="renderUserCenterModal()">←</button>
+      <div>
+        <h3>${escapeHtml(user.nama)}</h3>
+        <p class="modal-subtitle">${escapeHtml(user.sekolah || "-")}</p>
+      </div>
+    </div>
+
+    <div class="compact-detail-grid">
+      <div><small>Member ID</small><strong>${escapeHtml(user.id)}</strong></div>
+      <div><small>Status</small><strong>${escapeHtml(user.status)}</strong></div>
+      <div><small>Username</small><strong>${escapeHtml(user.username || "-")}</strong></div>
+      <div><small>Email</small><strong>${escapeHtml(user.email || "-")}</strong></div>
+      <div><small>Role</small><strong>${escapeHtml(user.role || "Anggota")}</strong></div>
+      <div><small>Jabatan</small><strong>${escapeHtml(user.jabatan || "Anggota")}</strong></div>
+    </div>
+
+    ${controls}
+    <button class="secondary-button" type="button" onclick="renderUserCenterModal()">← Kembali ke Daftar</button>
+  `);
+}
+
+
+/* -------------------------
+   AGENDA MANAGER COMPACT
+------------------------- */
+
+function renderAgendaManagerModal() {
+  const all = compactUI.agendaManager.items || [];
+  const query = String(compactUI.agendaManager.query || "").toLowerCase();
+  const statuses = ["RENCANA", "AKTIF", "SELESAI"];
+  const counts = {};
+  statuses.forEach(s => counts[s] = all.filter(x => String(x.status).toUpperCase() === s).length);
+
+  const filtered = all.filter(item => {
+    if (String(item.status).toUpperCase() !== compactUI.agendaManager.tab) return false;
+    if (!query) return true;
+    return [item.nama, item.tanggal, item.lokasi, item.moda].join(" ").toLowerCase().includes(query);
+  });
+
+  let listHtml = filtered.slice(0, compactUI.agendaManager.visible).map(item => {
+    const nextStatus = item.status === "AKTIF" ? "SELESAI" : "AKTIF";
+    const buttonText = item.status === "AKTIF" ? "Tandai Selesai" : "Jadikan Aktif";
+    return `
+      <div class="compact-row-card stack-mobile">
+        <div class="compact-row-main">
+          <strong>${escapeHtml(item.nama)}</strong>
+          <small>${escapeHtml(item.tanggal)} • ${escapeHtml(item.jam)}</small>
+          <span>${escapeHtml(item.moda)} • ${escapeHtml(item.lokasi)}</span>
+        </div>
+        <div class="compact-row-actions">
+          <span class="status-pill ${agendaStatusClass(item.status)}">${escapeHtml(item.status)}</span>
+          <button type="button" class="compact-detail-button" onclick="setAgendaStatus('${escapeJs(item.id)}','${escapeJs(nextStatus)}')">${escapeHtml(buttonText)}</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  if (!listHtml) listHtml = `<div class="empty-panel">Belum ada agenda pada kategori ini.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Agenda MGMP</h3>
+    <p class="modal-subtitle">Agenda dipisah berdasarkan status agar tetap pendek di HP.</p>
+
+    <details class="compact-disclosure">
+      <summary>＋ Tambah Agenda Baru</summary>
+      <form id="agendaManagerForm" class="manager-form compact-form" onsubmit="saveAgendaFromModal(event)">
+        <label class="modal-label">Nama Kegiatan</label>
+        <input id="agendaName" class="portal-input" type="text" placeholder="Contoh: Hari Belajar Guru Oktober" required>
+        <div class="two-col-inputs">
+          <div><label class="modal-label">Tanggal</label><input id="agendaDate" class="portal-input" type="date" required></div>
+          <div><label class="modal-label">Moda</label><select id="agendaMode" class="portal-select full"><option value="Luring">Luring</option><option value="Daring">Daring</option><option value="Hybrid">Hybrid</option></select></div>
+        </div>
+        <label class="modal-label">Jam</label>
+        <input id="agendaTime" class="portal-input" type="text" placeholder="Contoh: 13.00 - 15.00 WIB" required>
+        <label class="modal-label">Lokasi / Media</label>
+        <input id="agendaLocation" class="portal-input" type="text" placeholder="Lokasi atau link/media daring" required>
+        <label class="modal-label">Status</label>
+        <select id="agendaStatus" class="portal-select full"><option value="RENCANA">Rencana</option><option value="AKTIF">Aktif</option><option value="SELESAI">Selesai</option></select>
+        <button id="agendaSaveButton" type="submit" class="primary-button">+ TAMBAH AGENDA</button>
+      </form>
+    </details>
+
+    ${compactSearchHtml(compactUI.agendaManager.query, "filterAgendaManager", "Cari agenda atau lokasi...")}
+    <div class="compact-tabs">
+      ${compactTabButton("Rencana", "RENCANA", compactUI.agendaManager.tab, counts.RENCANA, "setAgendaManagerTab")}
+      ${compactTabButton("Aktif", "AKTIF", compactUI.agendaManager.tab, counts.AKTIF, "setAgendaManagerTab")}
+      ${compactTabButton("Selesai", "SELESAI", compactUI.agendaManager.tab, counts.SELESAI, "setAgendaManagerTab")}
+    </div>
+
+    <div class="compact-list">${listHtml}</div>
+    ${renderLoadMoreButton(filtered.length > compactUI.agendaManager.visible, "loadMoreAgendaManager")}
+    <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+  `);
+}
+
+
+function setAgendaManagerTab(tab) {
+  compactUI.agendaManager.tab = tab;
+  compactUI.agendaManager.visible = COMPACT_PAGE_SIZE;
+  renderAgendaManagerModal();
+}
+
+function filterAgendaManager(query) {
+  compactUI.agendaManager.query = query || "";
+  compactUI.agendaManager.visible = COMPACT_PAGE_SIZE;
+  renderAgendaManagerModal();
+  refocusCompactSearch();
+}
+
+function loadMoreAgendaManager() {
+  compactUI.agendaManager.visible += COMPACT_PAGE_SIZE;
+  renderAgendaManagerModal();
+}
+
+
+/* -------------------------
+   ANNOUNCEMENT MANAGER COMPACT
+------------------------- */
+
+function renderAnnouncementManagerModal() {
+  const all = compactUI.announcements.items || [];
+  const query = String(compactUI.announcements.query || "").toLowerCase();
+  const activeCount = all.filter(x => String(x.status).toUpperCase() === "AKTIF").length;
+  const inactiveCount = all.filter(x => String(x.status).toUpperCase() !== "AKTIF").length;
+
+  const filtered = all.filter(item => {
+    const status = String(item.status || "").toUpperCase();
+    if (compactUI.announcements.tab === "AKTIF" && status !== "AKTIF") return false;
+    if (compactUI.announcements.tab === "NONAKTIF" && status === "AKTIF") return false;
+    if (!query) return true;
+    return [item.judul, item.kategori, item.isi].join(" ").toLowerCase().includes(query);
+  });
+
+  let listHtml = filtered.slice(0, compactUI.announcements.visible).map(item => {
+    const nextStatus = item.status === "AKTIF" ? "NONAKTIF" : "AKTIF";
+    const buttonText = item.status === "AKTIF" ? "Nonaktifkan" : "Aktifkan";
+    return `
+      <div class="compact-row-card stack-mobile">
+        <div class="compact-row-main">
+          <strong>${escapeHtml(item.judul)}</strong>
+          <small>${escapeHtml(item.kategori)} • ${escapeHtml(item.tanggal)}</small>
+          <span class="compact-clamp-2">${escapeHtml(item.isi)}</span>
+        </div>
+        <div class="compact-row-actions">
+          <span class="status-pill ${item.status === "AKTIF" ? "approved" : "neutral"}">${escapeHtml(item.status)}</span>
+          <button type="button" class="compact-detail-button" onclick="setAnnouncementStatus('${escapeJs(item.id)}','${escapeJs(nextStatus)}')">${escapeHtml(buttonText)}</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  if (!listHtml) listHtml = `<div class="empty-panel">Belum ada pengumuman pada kategori ini.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Pengumuman</h3>
+    <p class="modal-subtitle">Dashboard hanya menampilkan yang terbaru. Arsip tetap dapat dicari.</p>
+
+    <details class="compact-disclosure">
+      <summary>＋ Tambah Pengumuman</summary>
+      <form id="announcementManagerForm" class="manager-form compact-form" onsubmit="saveAnnouncementFromModal(event)">
+        <label class="modal-label">Judul</label>
+        <input id="announcementTitle" class="portal-input" type="text" placeholder="Judul pengumuman" required>
+        <div class="two-col-inputs">
+          <div><label class="modal-label">Kategori</label><select id="announcementCategory" class="portal-select full"><option value="Umum">Umum</option><option value="Penting">Penting</option><option value="Agenda">Agenda</option><option value="Hari Belajar Guru">Hari Belajar Guru</option><option value="FLS">FLS</option></select></div>
+          <div><label class="modal-label">Tanggal</label><input id="announcementDate" class="portal-input" type="date"></div>
+        </div>
+        <label class="modal-label">Isi Pengumuman</label>
+        <textarea id="announcementBody" class="portal-textarea" rows="4" placeholder="Tulis isi pengumuman..." required></textarea>
+        <label class="modal-label">Status</label>
+        <select id="announcementStatus" class="portal-select full"><option value="AKTIF">Aktif</option><option value="NONAKTIF">Nonaktif</option></select>
+        <button id="announcementSaveButton" type="submit" class="primary-button">+ TAMBAH PENGUMUMAN</button>
+      </form>
+    </details>
+
+    ${compactSearchHtml(compactUI.announcements.query, "filterAnnouncementManager", "Cari judul atau isi...")}
+    <div class="compact-tabs">
+      ${compactTabButton("Aktif", "AKTIF", compactUI.announcements.tab, activeCount, "setAnnouncementManagerTab")}
+      ${compactTabButton("Arsip", "NONAKTIF", compactUI.announcements.tab, inactiveCount, "setAnnouncementManagerTab")}
+    </div>
+
+    <div class="compact-list">${listHtml}</div>
+    ${renderLoadMoreButton(filtered.length > compactUI.announcements.visible, "loadMoreAnnouncementManager")}
+    <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+  `);
+}
+
+function setAnnouncementManagerTab(tab) {
+  compactUI.announcements.tab = tab;
+  compactUI.announcements.visible = COMPACT_PAGE_SIZE;
+  renderAnnouncementManagerModal();
+}
+
+function filterAnnouncementManager(query) {
+  compactUI.announcements.query = query || "";
+  compactUI.announcements.visible = COMPACT_PAGE_SIZE;
+  renderAnnouncementManagerModal();
+  refocusCompactSearch();
+}
+
+function loadMoreAnnouncementManager() {
+  compactUI.announcements.visible += COMPACT_PAGE_SIZE;
+  renderAnnouncementManagerModal();
+}
+
+
+/* -------------------------
+   PUBLIC AGENDA COMPACT
+------------------------- */
+
+function jakartaTodayKey() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const map = {};
+  parts.forEach(p => { if (p.type !== "literal") map[p.type] = p.value; });
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function sortAgendaAsc(a, b) {
+  return String(a.tanggalInput || "9999-12-31").localeCompare(String(b.tanggalInput || "9999-12-31"));
+}
+
+function sortAgendaDesc(a, b) {
+  return String(b.tanggalInput || "").localeCompare(String(a.tanggalInput || ""));
+}
+
+function classifyPublicAgenda() {
+  const today = jakartaTodayKey();
+  const items = compactUI.publicAgenda.items || [];
+  return {
+    active: items.filter(x => String(x.status).toUpperCase() === "AKTIF").sort(sortAgendaAsc),
+    upcoming: items.filter(x => String(x.status).toUpperCase() === "RENCANA" && String(x.tanggalInput || "") >= today).sort(sortAgendaAsc),
+    history: items.filter(x => String(x.status).toUpperCase() === "SELESAI" || String(x.tanggalInput || "") < today).sort(sortAgendaDesc)
+  };
+}
+
+function renderPublicAgendaModal() {
+  const groups = classifyPublicAgenda();
+  let body = "";
+
+  if (compactUI.publicAgenda.tab === "ACTIVE") {
+    body = renderPublicAgendaCards(groups.active.slice(0, compactUI.publicAgenda.visible));
+    body += renderLoadMoreButton(groups.active.length > compactUI.publicAgenda.visible, "loadMorePublicAgenda", "Muat lainnya");
+  } else if (compactUI.publicAgenda.tab === "UPCOMING") {
+    body = renderPublicAgendaCards(groups.upcoming.slice(0, compactUI.publicAgenda.visible));
+    body += renderLoadMoreButton(groups.upcoming.length > compactUI.publicAgenda.visible, "loadMorePublicAgenda", "Muat 3 lainnya");
+  } else {
+    body = renderAgendaHistoryMonths(groups.history);
+  }
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Agenda MGMP</h3>
+    <p class="modal-subtitle">Agenda saat ini tetap singkat. Riwayat disusun per bulan.</p>
+    <div class="compact-tabs">
+      ${compactTabButton("Akan Datang", "UPCOMING", compactUI.publicAgenda.tab, groups.upcoming.length, "setPublicAgendaTab")}
+      ${compactTabButton("Aktif", "ACTIVE", compactUI.publicAgenda.tab, groups.active.length, "setPublicAgendaTab")}
+      ${compactTabButton("Riwayat", "HISTORY", compactUI.publicAgenda.tab, groups.history.length, "setPublicAgendaTab")}
+    </div>
+    <div class="compact-list">${body || `<div class="empty-panel">Belum ada agenda.</div>`}</div>
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function renderPublicAgendaCards(items) {
+  if (!items.length) return `<div class="empty-panel">Tidak ada agenda pada bagian ini.</div>`;
+  return items.map(item => `
+    <button type="button" class="agenda-list-card" onclick="openAgendaDetail('${escapeJs(item.id)}')">
+      <div class="agenda-list-date"><b>${escapeHtml((item.tanggal || "-").split(" ")[0])}</b><span>${escapeHtml(((item.tanggal || "").split(" ")[1] || "").slice(0,3).toUpperCase())}</span></div>
+      <div class="agenda-list-main"><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.jam)} • ${escapeHtml(item.moda)}</small><span>${escapeHtml(item.lokasi)}</span></div>
+      <span class="agenda-list-arrow">›</span>
+    </button>
+  `).join("");
+}
+
+function renderAgendaHistoryMonths(items) {
+  if (!items.length) return `<div class="empty-panel">Belum ada riwayat agenda.</div>`;
+  const map = {};
+  items.forEach(item => {
+    const key = String(item.tanggalInput || "").slice(0, 7) || "LAINNYA";
+    if (!map[key]) map[key] = [];
+    map[key].push(item);
+  });
+  const keys = Object.keys(map).sort().reverse().slice(0, compactUI.publicAgenda.visible);
+  const rows = keys.map(key => {
+    const first = map[key][0];
+    const label = first && first.tanggal ? monthYearFromIndonesianDate(first.tanggal) : key;
+    return `<button type="button" class="history-month-card" onclick="openAgendaHistoryMonth('${escapeJs(key)}')"><span>📁</span><div><strong>${escapeHtml(label)}</strong><small>${map[key].length} kegiatan</small></div><b>›</b></button>`;
+  }).join("");
+  return rows + renderLoadMoreButton(Object.keys(map).length > compactUI.publicAgenda.visible, "loadMorePublicAgenda", "Muat bulan lainnya");
+}
+
+function monthYearFromIndonesianDate(text) {
+  const parts = String(text || "").split(" ");
+  return parts.length >= 3 ? `${parts[1]} ${parts[2]}` : text;
+}
+
+function setPublicAgendaTab(tab) {
+  compactUI.publicAgenda.tab = tab;
+  compactUI.publicAgenda.visible = tab === "HISTORY" ? 5 : 3;
+  renderPublicAgendaModal();
+}
+
+function loadMorePublicAgenda() {
+  compactUI.publicAgenda.visible += compactUI.publicAgenda.tab === "HISTORY" ? 5 : 3;
+  renderPublicAgendaModal();
+}
+
+function openAgendaHistoryMonth(key) {
+  const history = classifyPublicAgenda().history.filter(x => String(x.tanggalInput || "").slice(0,7) === key);
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderPublicAgendaModal()">←</button><div><h3>Riwayat Agenda</h3><p class="modal-subtitle">${escapeHtml(history.length ? monthYearFromIndonesianDate(history[0].tanggal) : key)}</p></div></div>
+    <div class="compact-list">${renderPublicAgendaCards(history)}</div>
+    <button class="secondary-button" type="button" onclick="renderPublicAgendaModal()">← Kembali</button>
+  `);
+}
+
+function openAgendaDetail(id) {
+  const item = (compactUI.publicAgenda.items || []).find(x => x.id === id);
+  if (!item) return;
+  const docs = (compactUI.publicAgenda.documents || []).filter(x => x.agendaId === id && String(x.status).toUpperCase() === "AKTIF");
+  const docPreview = docs.slice(0, 5).map(doc => `
+    <button type="button" class="agenda-resource-row" onclick="${doc.link ? `openExternalLink('${escapeJs(doc.link)}')` : `openMeetingArchive({agendaId:'${escapeJs(id)}',title:'Arsip Kegiatan'})`}">
+      <span>${documentTypeIcon(doc.jenis)}</span><div><strong>${escapeHtml(formatDocumentType(doc.jenis))}</strong><small>${escapeHtml(doc.judul)}</small></div><b>›</b>
+    </button>
+  `).join("");
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderPublicAgendaModal()">←</button><div><h3>${escapeHtml(item.nama)}</h3><p class="modal-subtitle">${escapeHtml(item.tanggal)} • ${escapeHtml(item.jam)}</p></div></div>
+    <div class="agenda-detail-box">
+      <div><span>📍</span><p><small>Lokasi / Media</small><strong>${escapeHtml(item.lokasi || "-")}</strong></p></div>
+      <div><span>🟦</span><p><small>Moda</small><strong>${escapeHtml(item.moda || "-")}</strong></p></div>
+      <div><span>📌</span><p><small>Status</small><strong>${escapeHtml(item.status || "-")}</strong></p></div>
+    </div>
+    <div class="section-mini-title top-gap">Arsip Kegiatan</div>
+    ${docPreview || `<div class="empty-panel">Materi/notulen kegiatan belum tersedia.</div>`}
+    ${docs.length > 5 ? `<button class="compact-more-button" type="button" onclick="openMeetingArchive({agendaId:'${escapeJs(id)}',title:'Arsip Kegiatan'})">Buka semua arsip</button>` : ""}
+    <button class="secondary-button" type="button" onclick="renderPublicAgendaModal()">← Kembali ke Agenda</button>
+  `);
+}
+
+
+/* -------------------------
+   ARCHIVE COMPACT
+------------------------- */
+
+function meetingArchiveAgendaOptions(selected = "") {
+  let html = `<option value="">Pilih agenda/kegiatan...</option>`;
+  (compactUI.archive.agendas || []).forEach(item => {
+    html += `<option value="${escapeHtml(item.id)}" ${item.id === selected ? "selected" : ""}>${escapeHtml(item.tanggal)} — ${escapeHtml(item.nama)}</option>`;
+  });
+  return html;
+}
+
+function archiveYearOptions() {
+  const years = new Set();
+  (compactUI.archive.documents || []).forEach(item => {
+    const y = String(item.agendaTanggalInput || item.tanggalInput || "").slice(0,4);
+    if (y) years.add(y);
+  });
+  const list = Array.from(years).sort().reverse();
+  return `<option value="ALL">Semua Tahun</option>` + list.map(y => `<option value="${escapeHtml(y)}" ${compactUI.archive.year === y ? "selected" : ""}>${escapeHtml(y)}</option>`).join("");
+}
+
+function getFilteredArchiveGroups() {
+  const q = String(compactUI.archive.query || "").toLowerCase();
+  const groups = {};
+
+  (compactUI.archive.documents || []).forEach(item => {
+    if (compactUI.archive.agendaFilter && item.agendaId !== compactUI.archive.agendaFilter) return;
+    if (compactUI.archive.type !== "ALL" && String(item.jenis).toUpperCase() !== compactUI.archive.type) return;
+    const year = String(item.agendaTanggalInput || item.tanggalInput || "").slice(0,4);
+    if (compactUI.archive.year !== "ALL" && year !== compactUI.archive.year) return;
+    if (q && ![item.agendaNama, item.judul, item.deskripsi, item.dibuatOleh].join(" ").toLowerCase().includes(q)) return;
+
+    const key = item.agendaId || "LAINNYA";
+    if (!groups[key]) groups[key] = { agendaId:key, agendaNama:item.agendaNama || "Kegiatan MGMP", agendaTanggal:item.agendaTanggal || "", agendaTanggalInput:item.agendaTanggalInput || "", items:[] };
+    groups[key].items.push(item);
+  });
+
+  return Object.values(groups).sort((a,b) => String(b.agendaTanggalInput || "").localeCompare(String(a.agendaTanggalInput || "")));
+}
+
+function renderMeetingArchiveModal() {
+  const groups = getFilteredArchiveGroups();
+  const visible = groups.slice(0, compactUI.archive.visible);
+  const managerForm = compactUI.archive.isManager ? `
+    <details class="compact-disclosure archive-manager-box">
+      <summary>＋ Tambah Materi / Notulen / Hasil / Dokumentasi</summary>
+      <form id="meetingArchiveForm" class="compact-form" onsubmit="saveMeetingDocumentFromModal(event)">
+        <label class="modal-label">Agenda / Kegiatan</label>
+        <select id="meetingDocAgenda" class="portal-select full" required>${meetingArchiveAgendaOptions(compactUI.archive.agendaFilter)}</select>
+        <div class="two-col-inputs"><div><label class="modal-label">Jenis</label><select id="meetingDocType" class="portal-select full" required><option value="MATERI">Materi</option><option value="NOTULEN">Notulen</option><option value="HASIL_RAPAT">Hasil Rapat</option><option value="DOKUMENTASI">Dokumentasi</option></select></div><div><label class="modal-label">Tanggal</label><input id="meetingDocDate" class="portal-input" type="date"></div></div>
+        <label class="modal-label">Judul</label><input id="meetingDocTitle" class="portal-input" type="text" placeholder="Judul arsip" required>
+        <label class="modal-label">Ringkasan / Deskripsi</label><textarea id="meetingDocDescription" class="portal-textarea" rows="3" placeholder="Ringkasan, keputusan, tindak lanjut..."></textarea>
+        <label class="modal-label">Link Berbagi</label><input id="meetingDocLink" class="portal-input" type="url" placeholder="https://drive.google.com/...">
+        <div class="file-note">Portal hanya menyimpan link. File tetap di Drive/Docs/Slides/YouTube.</div>
+        <label class="modal-label">Status</label><select id="meetingDocStatus" class="portal-select full"><option value="AKTIF">Aktif</option><option value="NONAKTIF">Nonaktif</option></select>
+        <button id="meetingDocSaveButton" type="submit" class="primary-button">+ SIMPAN ARSIP</button>
+      </form>
+    </details>
+  ` : "";
+
+  let list = visible.map(group => {
+    const types = Array.from(new Set(group.items.map(x => formatDocumentType(x.jenis)))).slice(0,4).join(" • ");
+    return `<button type="button" class="archive-folder-card" onclick="openArchiveAgendaDetail('${escapeJs(group.agendaId)}')"><span class="archive-folder-icon">📁</span><div><strong>${escapeHtml(group.agendaNama)}</strong><small>${escapeHtml(group.agendaTanggal)} • ${group.items.length} arsip</small><p>${escapeHtml(types || "Arsip kegiatan")}</p></div><b>›</b></button>`;
+  }).join("");
+  if (!list) list = `<div class="empty-panel">Belum ada arsip sesuai filter.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-title-row"><div class="modal-icon compact">🗂️</div><div><h3>${escapeHtml(compactUI.archive.title)}</h3><p class="modal-subtitle">Arsip dikelompokkan per kegiatan agar tidak menjadi daftar panjang.</p></div></div>
+    ${managerForm}
+    ${compactSearchHtml(compactUI.archive.query, "filterMeetingArchive", "Cari kegiatan, judul, atau materi...")}
+    <div class="compact-filter-grid">
+      <select class="portal-select" onchange="setArchiveType(this.value)"><option value="ALL" ${compactUI.archive.type === "ALL" ? "selected" : ""}>Semua Jenis</option><option value="MATERI" ${compactUI.archive.type === "MATERI" ? "selected" : ""}>Materi</option><option value="NOTULEN" ${compactUI.archive.type === "NOTULEN" ? "selected" : ""}>Notulen</option><option value="HASIL_RAPAT" ${compactUI.archive.type === "HASIL_RAPAT" ? "selected" : ""}>Hasil Rapat</option><option value="DOKUMENTASI" ${compactUI.archive.type === "DOKUMENTASI" ? "selected" : ""}>Dokumentasi</option></select>
+      <select class="portal-select" onchange="setArchiveYear(this.value)">${archiveYearOptions()}</select>
+    </div>
+    <div class="compact-list">${list}</div>
+    ${renderLoadMoreButton(groups.length > compactUI.archive.visible, "loadMoreMeetingArchive")}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function filterMeetingArchive(query) { compactUI.archive.query = query || ""; compactUI.archive.visible = COMPACT_PAGE_SIZE; renderMeetingArchiveModal(); refocusCompactSearch(); }
+function setArchiveType(type) { compactUI.archive.type = type; compactUI.archive.visible = COMPACT_PAGE_SIZE; renderMeetingArchiveModal(); }
+function setArchiveYear(year) { compactUI.archive.year = year; compactUI.archive.visible = COMPACT_PAGE_SIZE; renderMeetingArchiveModal(); }
+function loadMoreMeetingArchive() { compactUI.archive.visible += COMPACT_PAGE_SIZE; renderMeetingArchiveModal(); }
+
+function openArchiveAgendaDetail(agendaId) {
+  compactUI.archive.currentAgendaId = agendaId;
+  const docs = (compactUI.archive.documents || []).filter(x => x.agendaId === agendaId).slice(0, compactUI.archive.detailVisible);
+  const allDocs = (compactUI.archive.documents || []).filter(x => x.agendaId === agendaId);
+  const first = allDocs[0] || {};
+  let cards = docs.map(item => {
+    const nextStatus = item.status === "AKTIF" ? "NONAKTIF" : "AKTIF";
+    return `
+      <div class="archive-card">
+        <div class="archive-card-top"><span class="archive-type-icon">${documentTypeIcon(item.jenis)}</span><div class="archive-card-title"><span class="archive-type-label">${escapeHtml(formatDocumentType(item.jenis))}</span><strong>${escapeHtml(item.judul)}</strong><small>${escapeHtml(item.tanggal)}${item.dibuatOleh ? " • " + escapeHtml(item.dibuatOleh) : ""}</small></div>${compactUI.archive.isManager ? `<span class="status-pill ${item.status === "AKTIF" ? "approved" : "neutral"}">${escapeHtml(item.status)}</span>` : ""}</div>
+        ${item.deskripsi ? `<p class="archive-description">${escapeHtml(item.deskripsi)}</p>` : ""}
+        <div class="archive-actions">${item.link ? `<button type="button" class="archive-open-button" onclick="openExternalLink('${escapeJs(item.link)}')">🔗 Buka Link</button>` : `<span class="archive-no-link">Tanpa link</span>`}${compactUI.archive.isManager ? `<button type="button" class="archive-toggle-button" onclick="setMeetingDocumentStatus('${escapeJs(item.id)}','${escapeJs(nextStatus)}')">${item.status === "AKTIF" ? "Nonaktifkan" : "Aktifkan"}</button>` : ""}</div>
+      </div>`;
+  }).join("");
+  if (!cards) cards = `<div class="empty-panel">Belum ada arsip pada kegiatan ini.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderMeetingArchiveModal()">←</button><div><h3>${escapeHtml(first.agendaNama || "Arsip Kegiatan")}</h3><p class="modal-subtitle">${escapeHtml(first.agendaTanggal || "")}</p></div></div>
+    <div class="compact-list">${cards}</div>
+    ${renderLoadMoreButton(allDocs.length > compactUI.archive.detailVisible, "loadMoreArchiveDetail")}
+    <button class="secondary-button" type="button" onclick="renderMeetingArchiveModal()">← Kembali ke Arsip</button>
+  `);
+}
+
+function loadMoreArchiveDetail() {
+  compactUI.archive.detailVisible += COMPACT_PAGE_SIZE;
+  if (compactUI.archive.currentAgendaId) {
+    openArchiveAgendaDetail(compactUI.archive.currentAgendaId);
+  }
+}
+
+
+/* -------------------------
+   ATTENDANCE COMPACT
+------------------------- */
+
+function renderAttendanceManagerModal() {
+  const all = compactUI.attendance.items || [];
+  const q = String(compactUI.attendance.query || "").toLowerCase();
+  const counts = {
+    BELUM: all.filter(x => !String(x.statusAbsen || "").trim()).length,
+    HADIR: all.filter(x => String(x.statusAbsen).toUpperCase() === "HADIR").length,
+    IZIN: all.filter(x => ["IZIN", "DINAS"].includes(String(x.statusAbsen).toUpperCase())).length
+  };
+
+  const filtered = all.filter(user => {
+    const status = String(user.statusAbsen || "").toUpperCase();
+    if (compactUI.attendance.tab === "BELUM" && status) return false;
+    if (compactUI.attendance.tab === "HADIR" && status !== "HADIR") return false;
+    if (compactUI.attendance.tab === "IZIN" && !["IZIN", "DINAS"].includes(status)) return false;
+    if (!q) return true;
+    return [user.nama, user.sekolah].join(" ").toLowerCase().includes(q);
+  });
+
+  let rows = filtered.slice(0, compactUI.attendance.visible).map(user => {
+    const status = String(user.statusAbsen || "").toUpperCase();
+    const action = status ? `<span class="attendance-status ${attendanceStatusClass(status)}">${statusIcon(status)} ${escapeHtml(status)}</span>` : `<button type="button" class="attendance-button" onclick="markPresent('${escapeJs(user.id)}')">HADIR</button>`;
+    return `<div class="attendance-row"><div><strong>${escapeHtml(user.nama)}</strong><small>${escapeHtml(user.sekolah)}</small></div>${action}</div>`;
+  }).join("");
+  if (!rows) rows = `<div class="empty-panel">Tidak ada anggota pada filter ini.</div>`;
+
+  const agenda = compactUI.attendance.agenda || {};
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Absensi Pertemuan</h3><p class="modal-subtitle"><b>${escapeHtml(agenda.nama || "Agenda Aktif")}</b><br>${escapeHtml(agenda.tanggal || "")} • ${escapeHtml(agenda.jam || "")}</p>
+    <div class="compact-counter-strip"><span>Belum <b>${counts.BELUM}</b></span><span>Hadir <b>${counts.HADIR}</b></span><span>Izin/Dinas <b>${counts.IZIN}</b></span></div>
+    ${compactSearchHtml(compactUI.attendance.query, "filterAttendanceManager", "Cari nama atau sekolah...")}
+    <div class="compact-tabs">${compactTabButton("Belum", "BELUM", compactUI.attendance.tab, counts.BELUM, "setAttendanceTab")}${compactTabButton("Hadir", "HADIR", compactUI.attendance.tab, counts.HADIR, "setAttendanceTab")}${compactTabButton("Izin/Dinas", "IZIN", compactUI.attendance.tab, counts.IZIN, "setAttendanceTab")}</div>
+    <div class="compact-list">${rows}</div>
+    ${renderLoadMoreButton(filtered.length > compactUI.attendance.visible, "loadMoreAttendance")}
+    <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+  `);
+}
+
+function setAttendanceTab(tab) { compactUI.attendance.tab = tab; compactUI.attendance.visible = COMPACT_PAGE_SIZE; renderAttendanceManagerModal(); }
+function filterAttendanceManager(q) { compactUI.attendance.query = q || ""; compactUI.attendance.visible = COMPACT_PAGE_SIZE; renderAttendanceManagerModal(); refocusCompactSearch(); }
+function loadMoreAttendance() { compactUI.attendance.visible += COMPACT_PAGE_SIZE; renderAttendanceManagerModal(); }
+
+
+/* -------------------------
+   MY ATTENDANCE COMPACT
+------------------------- */
+
+function renderMyAttendanceModal() {
+  const all = compactUI.myAttendance.items || [];
+  const visible = all.slice(0, compactUI.myAttendance.visible);
+  let rows = visible.map(item => {
+    const status = String(item.status || "").toUpperCase();
+    return `<div class="history-card"><div class="history-topline"><strong>${escapeHtml(item.agenda)}</strong><span class="attendance-status ${attendanceStatusClass(status)}">${statusIcon(status)} ${escapeHtml(status)}</span></div><small>${escapeHtml(item.tanggal)} • ${escapeHtml(item.jam)}</small></div>`;
+  }).join("");
+  if (!rows) rows = `<div class="empty-panel">Belum ada riwayat kehadiran.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Kehadiran Saya</h3><p class="modal-subtitle">Hanya 5 riwayat ditampilkan terlebih dahulu.</p>
+    <div class="compact-list">${rows}</div>
+    ${renderLoadMoreButton(all.length > compactUI.myAttendance.visible, "loadMoreMyAttendance")}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function loadMoreMyAttendance() { compactUI.myAttendance.visible += COMPACT_PAGE_SIZE; renderMyAttendanceModal(); }
+
+
+/* -------------------------
+   LEAVE CENTER COMPACT
+------------------------- */
+
+function renderLeaveCenterModal() {
+  let agendaOptions = `<option value="">Pilih kegiatan...</option>`;
+  (compactUI.leave.agendas || []).forEach(item => { agendaOptions += `<option value="${escapeHtml(item.id)}">${escapeHtml(item.tanggal)} — ${escapeHtml(item.nama)}</option>`; });
+
+  const filter = compactUI.leave.filter;
+  const filtered = (compactUI.leave.history || []).filter(item => {
+    const status = String(item.status || "").toUpperCase();
+    if (filter === "PENDING") return status === "PENDING";
+    if (filter === "DONE") return status !== "PENDING";
+    return true;
+  });
+
+  let history = filtered.slice(0, compactUI.leave.visible).map(item => `<div class="history-card"><div class="history-topline"><strong>${escapeHtml(item.agenda)}</strong><span class="status-pill ${leaveStatusClass(item.status)}">${leaveStatusLabel(item.status)}</span></div><small>${escapeHtml(item.jenisIzin)} • ${escapeHtml(item.tanggalKirim)}</small><p class="compact-clamp-2">${escapeHtml(item.keterangan)}</p>${item.catatan ? `<small>Catatan: ${escapeHtml(item.catatan)}</small>` : ""}</div>`).join("");
+  if (!history) history = `<div class="empty-panel">Belum ada riwayat izin pada filter ini.</div>`;
+
+  const all = compactUI.leave.history || [];
+  const pendingCount = all.filter(x => String(x.status).toUpperCase() === "PENDING").length;
+  const doneCount = all.length - pendingCount;
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Izin Tidak Hadir</h3><p class="modal-subtitle">Form disimpan ringkas; riwayat tidak ditampilkan sekaligus.</p>
+    <details class="compact-disclosure" ${all.length ? "" : "open"}>
+      <summary>＋ Ajukan Izin Baru</summary>
+      <form id="leaveForm" class="compact-form" onsubmit="submitLeaveFromModal(event)">
+        <label class="modal-label">Kegiatan</label><select id="leaveAgenda" class="portal-select full" required>${agendaOptions}</select>
+        <label class="modal-label">Jenis Izin</label><select id="leaveType" class="portal-select full" required><option value="SAKIT">Sakit</option><option value="DINAS">Dinas</option><option value="KELUARGA">Kepentingan Keluarga</option><option value="LAINNYA">Lainnya</option></select>
+        <label class="modal-label">Keterangan</label><textarea id="leaveDescription" class="portal-textarea" rows="3" placeholder="Tuliskan alasan singkat..." required></textarea>
+        <label class="modal-label">Bukti Foto / Surat <span class="optional-text">opsional, maks. 2 MB</span></label><input id="leaveFile" class="portal-file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"><div class="file-note">Format: JPG, PNG, WEBP, atau PDF.</div>
+        <button id="leaveSubmitButton" type="submit" class="primary-button">KIRIM IZIN</button>
+      </form>
+    </details>
+    <div class="section-mini-title top-gap">Riwayat Izin</div>
+    <div class="compact-tabs">${compactTabButton("Semua", "ALL", compactUI.leave.filter, all.length, "setLeaveFilter")}${compactTabButton("Menunggu", "PENDING", compactUI.leave.filter, pendingCount, "setLeaveFilter")}${compactTabButton("Selesai", "DONE", compactUI.leave.filter, doneCount, "setLeaveFilter")}</div>
+    <div class="compact-list">${history}</div>
+    ${renderLoadMoreButton(filtered.length > compactUI.leave.visible, "loadMoreLeaveHistory")}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function setLeaveFilter(filter) { compactUI.leave.filter = filter; compactUI.leave.visible = COMPACT_PAGE_SIZE; renderLeaveCenterModal(); }
+function loadMoreLeaveHistory() { compactUI.leave.visible += COMPACT_PAGE_SIZE; renderLeaveCenterModal(); }
+
+
+/* -------------------------
+   LEAVE REVIEW COMPACT
+------------------------- */
+
+function renderLeaveReviewModal() {
+  const all = compactUI.leaveReview.items || [];
+  const q = String(compactUI.leaveReview.query || "").toLowerCase();
+  const counts = { PENDING:0, APPROVED:0, REJECTED:0 };
+  all.forEach(x => { const s=String(x.status || "PENDING").toUpperCase(); if (counts[s] != null) counts[s]++; });
+  const filtered = all.filter(item => {
+    if (String(item.status || "PENDING").toUpperCase() !== compactUI.leaveReview.tab) return false;
+    if (!q) return true;
+    return [item.nama, item.sekolah, item.agenda, item.keterangan].join(" ").toLowerCase().includes(q);
+  });
+
+  let rows = filtered.slice(0, compactUI.leaveReview.visible).map(item => {
+    const pending = String(item.status).toUpperCase() === "PENDING";
+    return `<div class="management-card"><div class="management-card-head"><div><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.sekolah)}</small></div><span class="status-pill ${leaveStatusClass(item.status)}">${leaveStatusLabel(item.status)}</span></div><div class="leave-detail"><b>${escapeHtml(item.agenda)}</b><span>${escapeHtml(item.jenisIzin)} • ${escapeHtml(item.tanggalKirim)}</span><p class="compact-clamp-2">${escapeHtml(item.keterangan)}</p></div>${item.hasBukti ? `<button type="button" class="proof-link proof-button" onclick="openLeaveProof('${escapeJs(item.id)}')">📎 Lihat Bukti</button>` : ""}${pending ? `<textarea id="review-note-${escapeHtml(item.id)}" class="portal-textarea" rows="2" placeholder="Catatan verifikasi (opsional)"></textarea><div class="review-buttons"><button type="button" class="approve-button" onclick="reviewLeave('${escapeJs(item.id)}','APPROVE')">✓ Setujui</button><button type="button" class="reject-button" onclick="reviewLeave('${escapeJs(item.id)}','REJECT')">✕ Tolak</button></div>` : item.catatan ? `<small class="review-note-readonly">Catatan: ${escapeHtml(item.catatan)}</small>` : ""}</div>`;
+  }).join("");
+  if (!rows) rows = `<div class="empty-panel">Tidak ada data pada kategori ini.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <h3>Verifikasi Izin</h3><p class="modal-subtitle">Default fokus pada yang perlu tindakan.</p>
+    ${compactSearchHtml(compactUI.leaveReview.query, "filterLeaveReview", "Cari nama, sekolah, kegiatan...")}
+    <div class="compact-tabs">${compactTabButton("Menunggu", "PENDING", compactUI.leaveReview.tab, counts.PENDING, "setLeaveReviewTab")}${compactTabButton("Disetujui", "APPROVED", compactUI.leaveReview.tab, counts.APPROVED, "setLeaveReviewTab")}${compactTabButton("Ditolak", "REJECTED", compactUI.leaveReview.tab, counts.REJECTED, "setLeaveReviewTab")}</div>
+    <div class="compact-list">${rows}</div>
+    ${renderLoadMoreButton(filtered.length > compactUI.leaveReview.visible, "loadMoreLeaveReview")}
+    <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+  `);
+}
+
+function setLeaveReviewTab(tab) { compactUI.leaveReview.tab = tab; compactUI.leaveReview.visible = COMPACT_PAGE_SIZE; renderLeaveReviewModal(); }
+function filterLeaveReview(q) { compactUI.leaveReview.query = q || ""; compactUI.leaveReview.visible = COMPACT_PAGE_SIZE; renderLeaveReviewModal(); refocusCompactSearch(); }
+function loadMoreLeaveReview() { compactUI.leaveReview.visible += COMPACT_PAGE_SIZE; renderLeaveReviewModal(); }
+
+
+/* -------------------------
+   PUBLIC ANNOUNCEMENTS
+------------------------- */
+
+async function openAnnouncementPublic() {
+  showLoadingModal("Pengumuman");
+  try {
+    const res = await apiRequest("listAnnouncementsPublic", { token: sessionToken });
+    if (!res.success) { showToast(res.message); closeModal(); return; }
+    compactUI.publicAnnouncements.items = res.announcements || [];
+    compactUI.publicAnnouncements.visible = COMPACT_PAGE_SIZE;
+    renderAnnouncementPublicModal();
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+function renderAnnouncementPublicModal() {
+  const all = compactUI.publicAnnouncements.items || [];
+  let rows = all.slice(0, compactUI.publicAnnouncements.visible).map(item => `<div class="public-announcement-card"><div class="announcement-label">${escapeHtml(item.kategori || "UMUM")}</div><strong>${escapeHtml(item.judul)}</strong><small>${escapeHtml(item.tanggal)}</small><p>${escapeHtml(item.isi)}</p></div>`).join("");
+  if (!rows) rows = `<div class="empty-panel">Belum ada pengumuman aktif.</div>`;
+  setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><h3>Pengumuman</h3><p class="modal-subtitle">Menampilkan 5 informasi terlebih dahulu.</p><div class="compact-list">${rows}</div>${renderLoadMoreButton(all.length > compactUI.publicAnnouncements.visible, "loadMorePublicAnnouncements")}<button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>`);
+}
+
+function loadMorePublicAnnouncements() { compactUI.publicAnnouncements.visible += COMPACT_PAGE_SIZE; renderAnnouncementPublicModal(); }
+
+
+/* -------------------------
+   PRAYER WIDGET
+------------------------- */
+
+async function loadPrayerWidget() {
+  const section = document.getElementById("prayerSection");
+  if (!section || !sessionToken) return;
+
+  try {
+    const res = await apiRequest("prayerTimes", { token: sessionToken });
+    if (!res.success || !res.enabled) {
+      section.classList.add("hidden");
+      return;
+    }
+
+    prayerWidgetData = res;
+    section.classList.remove("hidden");
+    setText("prayerNextName", (res.next && res.next.name ? res.next.name : "Salat") + (res.next && res.next.tomorrow ? " besok" : ""));
+    setText("prayerNextTime", res.next && res.next.time ? res.next.time + " WIB" : "-");
+    setText("prayerLocation", shortPrayerLocation(res.location));
+  } catch (err) {
+    section.classList.add("hidden");
+  }
+}
+
+function shortPrayerLocation(text) {
+  const parts = String(text || "Kawali, Ciamis").split(",").map(x => x.trim()).filter(Boolean);
+  return parts.slice(0,2).join(", ") || "Kawali, Ciamis";
+}
+
+async function openPrayerTimes() {
+  if (!prayerWidgetData) {
+    showLoadingModal("Jadwal Salat");
+    const res = await apiRequest("prayerTimes", { token: sessionToken });
+    if (!res.success || !res.enabled) { showToast(res.message || "Jadwal salat belum tersedia."); closeModal(); return; }
+    prayerWidgetData = res;
+  }
+
+  const p = prayerWidgetData;
+  const times = p.times || {};
+  const items = [["Subuh",times.subuh],["Terbit",times.terbit],["Dzuhur",times.dzuhur],["Ashar",times.ashar],["Maghrib",times.maghrib],["Isya",times.isya]];
+  setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><div class="modal-title-row"><div class="modal-icon compact">🕌</div><div><h3>Jadwal Salat</h3><p class="modal-subtitle">${escapeHtml(shortPrayerLocation(p.location))} • ${escapeHtml(p.date || "")}</p></div></div><div class="prayer-grid">${items.map(([n,t]) => `<div class="prayer-time-item ${p.next && p.next.name === n && !p.next.tomorrow ? "next" : ""}"><small>${escapeHtml(n)}</small><strong>${escapeHtml(t || "-")}</strong></div>`).join("")}</div><div class="prayer-source-note">Metode: ${escapeHtml(p.method || "Kemenag RI")} • Sumber waktu: ${escapeHtml(p.source || "API")}. Jadwal dapat berbeda beberapa menit dari jadwal lokal resmi.</div><button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>`);
+}
+
+
+/* -------------------------
+   KAS / QRIS FOUNDATION
+------------------------- */
+
+async function openKasSaya() {
+  showLoadingModal("Kas Saya");
+  try {
+    const res = await apiRequest("portalSettings", { token: sessionToken });
+    if (!res.success) { showToast(res.message); closeModal(); return; }
+    compactUI.portalSettings = res.settings || {};
+    const s = compactUI.portalSettings;
+    const qrisActive = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
+    setModalHtml(`
+      <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+      <div class="modal-title-row"><div class="modal-icon compact">💰</div><div><h3>Kas Saya</h3><p class="modal-subtitle">Fondasi pembayaran kas Portal KOM 3</p></div></div>
+      <div class="kas-summary-card"><small>Kas Bulanan</small><strong>${formatRupiah(s.kasMonthly || 5000)}</strong><span>Status pembayaran otomatis akan aktif pada modul Keuangan.</span></div>
+      ${qrisActive ? `<div class="qris-box"><div class="qris-title">Bayar dengan QRIS</div><img src="${escapeHtml(s.qrisImageUrl)}" alt="QRIS Kas KOM 3" class="qris-image"><strong>${escapeHtml(s.qrisName || "MGMP Komisariat 3")}</strong><small>Scan melalui aplikasi bank/e-wallet. Pastikan nama penerima sesuai sebelum membayar.</small><button type="button" class="outline-button" onclick="openQrisImage('${escapeJs(s.qrisImageUrl)}')">🔍 Perbesar QRIS</button></div>` : `<div class="empty-panel">QRIS belum diaktifkan oleh Admin. Fitur Kas tetap aman dan tidak mengubah data pembayaran lama.</div>`}
+      <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+    `);
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+function formatRupiah(value) {
+  const num = Number(value || 0);
+  return new Intl.NumberFormat("id-ID", { style:"currency", currency:"IDR", maximumFractionDigits:0 }).format(num);
+}
+
+function isSafePortalImageUrl(url) {
+  const text = String(url || "").trim();
+  return /^https:\/\//i.test(text) || /^assets\/[A-Za-z0-9._\-/]+$/i.test(text);
+}
+
+function openQrisImage(url) {
+  if (!isSafePortalImageUrl(url)) { showToast("Link QRIS tidak valid."); return; }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+
+/* -------------------------
+   PORTAL SETTINGS ADMIN
+------------------------- */
+
+async function openPortalSettings() {
+  if (!currentUser || currentUser.role !== "Admin") { showToast("Pengaturan Portal khusus Admin."); return; }
+  showLoadingModal("Pengaturan Portal");
+  try {
+    const res = await apiRequest("portalSettings", { token: sessionToken });
+    if (!res.success) { showToast(res.message); closeModal(); return; }
+    const s = res.settings || {};
+    compactUI.portalSettings = s;
+    setModalHtml(`
+      <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+      <h3>Pengaturan Portal</h3><p class="modal-subtitle">Pengaturan tambahan V1.2.4. Tidak mengubah data fitur lama.</p>
+      <form id="portalSettingsForm" class="manager-form compact-form" onsubmit="savePortalSettingsFromModal(event)">
+        <div class="section-mini-title">Jadwal Salat</div>
+        <label class="modal-label">Status</label><select id="settingPrayerStatus" class="portal-select full"><option value="AKTIF" ${String(s.prayerStatus).toUpperCase() === "AKTIF" ? "selected" : ""}>Aktif</option><option value="NONAKTIF" ${String(s.prayerStatus).toUpperCase() === "NONAKTIF" ? "selected" : ""}>Nonaktif</option></select>
+        <label class="modal-label">Lokasi</label><input id="settingPrayerAddress" class="portal-input" type="text" value="${escapeHtml(s.prayerAddress || "Kawali, Ciamis, Jawa Barat, Indonesia")}"><div class="file-note">Default: Kawali, Ciamis. Metode perhitungan dikunci ke Kementerian Agama RI.</div>
+        <div class="section-mini-title top-gap">Kas & QRIS</div>
+        <label class="modal-label">Kas Bulanan</label><input id="settingKasMonthly" class="portal-input" type="number" min="0" step="1000" value="${escapeHtml(String(s.kasMonthly || 5000))}">
+        <label class="modal-label">Nama QRIS / Penerima</label><input id="settingQrisName" class="portal-input" type="text" value="${escapeHtml(s.qrisName || "MGMP Bahasa Inggris SMP Komisariat 3")}">
+        <label class="modal-label">Gambar QRIS</label><input id="settingQrisImage" class="portal-input" type="text" value="${escapeHtml(s.qrisImageUrl || "")}" placeholder="assets/qris.jpg atau https://..."><div class="file-note">Paling sederhana: upload qris.jpg ke folder assets GitHub, lalu isi <b>assets/qris.jpg</b>.</div>
+        <label class="modal-label">Status QRIS</label><select id="settingQrisStatus" class="portal-select full"><option value="NONAKTIF" ${String(s.qrisStatus).toUpperCase() !== "AKTIF" ? "selected" : ""}>Nonaktif</option><option value="AKTIF" ${String(s.qrisStatus).toUpperCase() === "AKTIF" ? "selected" : ""}>Aktif</option></select>
+        <label class="modal-label">Tahun Ajaran Default</label><input id="settingAcademicYear" class="portal-input" type="text" value="${escapeHtml(s.tahunAjaran || "2026/2027")}" placeholder="2026/2027">
+        <button id="portalSettingsSaveButton" type="submit" class="primary-button">SIMPAN PENGATURAN</button>
+      </form>
+      <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+    `);
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+async function savePortalSettingsFromModal(event) {
+  event.preventDefault();
+  setButtonLoading("portalSettingsSaveButton", true, "Menyimpan...");
+  try {
+    const res = await apiRequest("savePortalSettings", {
+      token: sessionToken,
+      prayerStatus: document.getElementById("settingPrayerStatus").value,
+      prayerAddress: valueOf("settingPrayerAddress"),
+      kasMonthly: valueOf("settingKasMonthly"),
+      qrisName: valueOf("settingQrisName"),
+      qrisImageUrl: valueOf("settingQrisImage"),
+      qrisStatus: document.getElementById("settingQrisStatus").value,
+      tahunAjaran: valueOf("settingAcademicYear")
+    });
+    showToast(res.message);
+    if (res.success) {
+      prayerWidgetData = null;
+      await loadPrayerWidget();
+      await openPortalSettings();
+    }
+  } catch (err) { showToast(err.message); }
+  finally { setButtonLoading("portalSettingsSaveButton", false, "SIMPAN PENGATURAN"); }
+}
+
 /* =========================================================
    FEATURE ROUTER
 ========================================================= */
@@ -1811,12 +2298,19 @@ async function openFeature(name) {
   if (name === "Pengumuman") {
     if (currentUser && (currentUser.role === "Admin" || currentUser.role === "Pengurus")) {
       await openAnnouncementManager();
-      return;
+    } else {
+      await openAnnouncementPublic();
     }
+    return;
   }
 
   if (name === "Dokumen MGMP" || name === "Arsip Rapat & Materi") {
     await openMeetingArchive();
+    return;
+  }
+
+  if (name === "Kas Saya" || name === "Keuangan") {
+    await openKasSaya();
     return;
   }
 
@@ -1909,6 +2403,11 @@ function setNav(element, name) {
         currentUser.role +
         (currentUser.jabatan ? " • " + currentUser.jabatan : "")
     );
+    return;
+  }
+
+  if (name === "Keuangan") {
+    openFeature("Kas Saya");
     return;
   }
 
