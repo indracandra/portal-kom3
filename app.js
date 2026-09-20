@@ -2147,8 +2147,22 @@ async function loadPrayerWidget() {
 
   try {
     const res = await apiRequest("prayerTimes", { token: sessionToken });
-    if (!res.success || !res.enabled) {
+
+    // Jika Admin memang menonaktifkan jadwal salat, kartu boleh disembunyikan.
+    if (res && res.enabled === false) {
+      prayerWidgetData = null;
       section.classList.add("hidden");
+      return;
+    }
+
+    // V1.2.5.1: kegagalan API tidak lagi membuat fitur "menghilang".
+    // Kartu tetap terlihat dan dapat diketuk untuk mencoba lagi.
+    if (!res || !res.success) {
+      prayerWidgetData = null;
+      section.classList.remove("hidden");
+      setText("prayerNextName", "Jadwal belum tersedia");
+      setText("prayerNextTime", "Coba lagi");
+      setText("prayerLocation", shortPrayerLocation(res && res.location ? res.location : "Kawali, Ciamis"));
       return;
     }
 
@@ -2158,7 +2172,11 @@ async function loadPrayerWidget() {
     setText("prayerNextTime", res.next && res.next.time ? res.next.time + " WIB" : "-");
     setText("prayerLocation", shortPrayerLocation(res.location));
   } catch (err) {
-    section.classList.add("hidden");
+    prayerWidgetData = null;
+    section.classList.remove("hidden");
+    setText("prayerNextName", "Jadwal belum tersedia");
+    setText("prayerNextTime", "Coba lagi");
+    setText("prayerLocation", "Kawali, Ciamis");
   }
 }
 
@@ -2167,12 +2185,36 @@ function shortPrayerLocation(text) {
   return parts.slice(0,2).join(", ") || "Kawali, Ciamis";
 }
 
+async function retryPrayerTimes() {
+  prayerWidgetData = null;
+  closeModal();
+  await loadPrayerWidget();
+  await openPrayerTimes();
+}
+
 async function openPrayerTimes() {
   if (!prayerWidgetData) {
     showLoadingModal("Jadwal Salat");
-    const res = await apiRequest("prayerTimes", { token: sessionToken });
-    if (!res.success || !res.enabled) { showToast(res.message || "Jadwal salat belum tersedia."); closeModal(); return; }
-    prayerWidgetData = res;
+    try {
+      const res = await apiRequest("prayerTimes", { token: sessionToken });
+
+      if (res && res.enabled === false) {
+        showToast("Jadwal salat sedang dinonaktifkan oleh Admin.");
+        closeModal();
+        return;
+      }
+
+      if (!res || !res.success) {
+        const location = shortPrayerLocation(res && res.location ? res.location : "Kawali, Ciamis");
+        setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><div class="modal-title-row"><div class="modal-icon compact">🕌</div><div><h3>Jadwal Salat</h3><p class="modal-subtitle">${escapeHtml(location)}</p></div></div><div class="empty-state compact"><strong>Jadwal sementara belum dapat dimuat.</strong><span>Periksa koneksi lalu coba kembali. Fitur Portal lainnya tetap dapat digunakan.</span></div><button class="primary-button" type="button" onclick="retryPrayerTimes()">Coba Lagi</button><button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>`);
+        return;
+      }
+
+      prayerWidgetData = res;
+    } catch (err) {
+      setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><div class="modal-title-row"><div class="modal-icon compact">🕌</div><div><h3>Jadwal Salat</h3><p class="modal-subtitle">Kawali, Ciamis</p></div></div><div class="empty-state compact"><strong>Jadwal sementara belum dapat dimuat.</strong><span>Silakan coba kembali beberapa saat lagi.</span></div><button class="primary-button" type="button" onclick="retryPrayerTimes()">Coba Lagi</button><button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>`);
+      return;
+    }
   }
 
   const p = prayerWidgetData;
