@@ -2632,3 +2632,72 @@ button:disabled {
 .digital-member-card{border-radius:28px;overflow:hidden;background:linear-gradient(155deg,#062c4a,#0c5a83);color:#fff;box-shadow:0 20px 45px rgba(7,42,68,.25);margin:6px 0 14px}.digital-card-head{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.13)}.digital-card-head img{width:48px;height:48px;border-radius:50%;object-fit:cover;background:#fff}.digital-card-head small,.digital-card-head strong{display:block}.digital-card-head small{font-size:9px;letter-spacing:.12em;color:#f3cf61}.digital-card-head strong{font-size:15px;margin-top:2px}.digital-card-identity{padding:18px;text-align:center}.digital-card-identity>small{font-size:9px;letter-spacing:.18em;color:#f3cf61}.digital-card-identity h3{margin:8px 0 2px;color:#fff;font-size:23px}.digital-card-identity p{margin:0;color:rgba(255,255,255,.78);font-size:13px}.digital-card-meta{display:flex;justify-content:center;gap:8px;align-items:center;margin-top:12px}.digital-card-meta span,.digital-card-meta b{background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 10px;font-size:10px}.digital-card-meta b{color:#f6d45f}.digital-card-qr{width:220px;height:220px;margin:0 auto 18px;background:#fff;border-radius:20px;padding:10px;display:grid;place-items:center}.digital-card-qr img{width:100%;height:100%;object-fit:contain}.digital-card-foot{display:flex;justify-content:space-between;padding:13px 18px;background:rgba(0,0,0,.13);font-size:10px;color:rgba(255,255,255,.78)}.qr-security-note{font-size:11px;line-height:1.5;color:#657888;background:#f4f8fb;border-radius:14px;padding:11px;margin:10px 0}.qr-fallback-code{text-align:center;color:#1a3348}.qr-fallback-code b,.qr-fallback-code small{display:block}.qr-fallback-code small{margin-top:8px;font-size:11px}
 .qr-scan-launch{width:100%;display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:10px;border:0;border-radius:17px;background:#0a4d78;color:#fff;padding:12px 14px;margin:10px 0;text-align:left}.qr-scan-launch>span{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.14);display:grid;place-items:center;font-size:22px}.qr-scan-launch b,.qr-scan-launch small{display:block}.qr-scan-launch b{font-size:13px}.qr-scan-launch small{font-size:10px;opacity:.76;margin-top:3px}.qr-scan-launch>strong{font-size:24px}
 .qr-scanner-shell{position:relative;background:#081621;border-radius:22px;overflow:hidden;aspect-ratio:3/4;max-height:440px;margin:12px 0}.qr-scanner-shell video{width:100%;height:100%;object-fit:cover}.qr-scan-frame{position:absolute;inset:18% 12%;pointer-events:none}.qr-scan-frame span{position:absolute;width:42px;height:42px;border-color:#f5d35a;border-style:solid}.qr-scan-frame span:nth-child(1){left:0;top:0;border-width:4px 0 0 4px}.qr-scan-frame span:nth-child(2){right:0;top:0;border-width:4px 4px 0 0}.qr-scan-frame span:nth-child(3){left:0;bottom:0;border-width:0 0 4px 4px}.qr-scan-frame span:nth-child(4){right:0;bottom:0;border-width:0 4px 4px 0}.qr-scanner-status{position:absolute;left:12px;right:12px;bottom:12px;background:rgba(5,20,30,.78);color:#fff;border-radius:12px;padding:10px;text-align:center;font-size:11px}.qr-manual-separator{display:flex;align-items:center;gap:10px;color:#96a3ae;font-size:11px;margin:12px 0}.qr-manual-separator:before,.qr-manual-separator:after{content:"";height:1px;background:#e2e8ee;flex:1}
+
+/* =========================================================
+   V1.4.1 - TRANSPARANSI KEUANGAN + KARTU PREMIUM
+========================================================= */
+.public-finance-balance{
+  margin:14px 0 12px;
+  padding:18px;
+  border-radius:22px;
+  background:linear-gradient(145deg,#0a385c,#0d5b82);
+  color:#fff;
+  box-shadow:0 12px 26px rgba(8,54,87,.18);
+}
+.public-finance-balance small,.public-finance-balance span{display:block;color:rgba(255,255,255,.72)}
+.public-finance-balance small{font-size:11px;text-transform:uppercase;letter-spacing:.12em}
+.public-finance-balance strong{display:block;font-size:28px;line-height:1.15;margin:5px 0 4px;color:#fff}
+.public-finance-balance span{font-size:11px}
+.public-finance-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
+.public-finance-grid>div{background:#f6f9fc;border:1px solid #e0e8ef;border-radius:16px;padding:12px;min-width:0}
+.public-finance-grid small{display:block;color:#788b99;font-size:10px;margin-bottom:5px}
+.public-finance-grid strong{display:block;color:#15344b;font-size:14px;word-break:break-word}
+.public-finance-note{padding:10px 12px;background:#fff8df;border:1px solid #f0dfa0;border-radius:14px;color:#6e633d;font-size:10px;line-height:1.5}
+.public-finance-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 2px;border-bottom:1px solid #e7edf2}
+.public-finance-row:last-child{border-bottom:0}
+.public-finance-row>div:first-child{min-width:0}
+.public-finance-row strong,.public-finance-row small{display:block}
+.public-finance-row strong{font-size:12px;color:#17364d}
+.public-finance-row small{font-size:9px;color:#83929d;margin-top:3px}
+.public-finance-row-values{display:flex;flex-direction:column;align-items:flex-end;gap:3px;white-space:nowrap;font-size:10px}
+.compact-pager{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin:12px 0 14px;padding:8px;background:#f5f8fb;border-radius:14px}
+.compact-pager button{border:0;background:#e6eef5;color:#174565;border-radius:10px;padding:9px 8px;font-size:10px;font-weight:700}
+.compact-pager button:last-child{justify-self:stretch}
+.compact-pager button:disabled{opacity:.35}
+.compact-pager span{text-align:center;color:#6f8190;font-size:9px;white-space:nowrap}
+
+/* Premium digital member card */
+.premium-member-card{position:relative;isolation:isolate;background:linear-gradient(155deg,#062c4a 0%,#073d63 54%,#0b5a80 100%);border:1px solid rgba(255,213,92,.25);box-shadow:0 24px 55px rgba(3,37,61,.32);overflow:hidden}
+.premium-member-card:before{content:"KOM 3";position:absolute;right:-8px;top:110px;font-size:72px;font-weight:900;letter-spacing:.04em;color:rgba(255,255,255,.025);transform:rotate(-8deg);z-index:-1;pointer-events:none}
+.premium-card-glow{position:absolute;border-radius:50%;filter:blur(1px);pointer-events:none;z-index:-1}
+.glow-one{width:170px;height:170px;right:-70px;top:-65px;background:radial-gradient(circle,rgba(255,215,96,.15),rgba(255,215,96,0) 68%)}
+.glow-two{width:180px;height:180px;left:-90px;bottom:-75px;background:radial-gradient(circle,rgba(55,180,230,.16),rgba(55,180,230,0) 68%)}
+.premium-card-head{padding:13px 16px 12px;border-bottom:0}
+.premium-logo-ring{width:54px;height:54px;flex:0 0 54px;border-radius:50%;padding:3px;background:linear-gradient(145deg,#f6d15d,#fff3bd);box-shadow:0 5px 14px rgba(0,0,0,.22)}
+.premium-logo-ring img{width:100%;height:100%;border-radius:50%;object-fit:cover;background:#fff}
+.premium-card-head small{font-size:8px;letter-spacing:.13em;color:#f7d66b;font-weight:700}
+.premium-card-head strong{font-size:15px;letter-spacing:.02em;color:#fff;margin-top:2px}
+.premium-card-head em{display:block;margin-top:2px;color:rgba(255,255,255,.46);font-size:7px;font-style:normal;letter-spacing:.08em}
+.premium-gold-line{height:1px;background:linear-gradient(90deg,transparent,rgba(246,211,96,.75),transparent);margin:0 15px}
+.premium-card-identity{padding:14px 15px 10px}
+.premium-card-identity>small{font-size:8px;letter-spacing:.19em;color:#f6d15d}
+.premium-card-identity h3{font-size:21px;line-height:1.15;margin:7px 0 3px}
+.premium-card-identity p{font-size:11px}
+.premium-card-meta{margin-top:10px;flex-wrap:wrap}
+.premium-card-meta span,.premium-card-meta b{font-size:9px;padding:6px 10px;max-width:86%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.premium-card-meta b{background:rgba(246,209,93,.14);border-color:rgba(246,209,93,.34);color:#f8d568}
+.premium-qr-caption{display:flex;align-items:center;gap:8px;width:72%;margin:2px auto 7px;color:rgba(255,255,255,.55);font-size:7px;letter-spacing:.16em}
+.premium-qr-caption span{height:1px;flex:1;background:rgba(255,255,255,.16)}
+.premium-card-qr{width:190px;height:190px;margin-bottom:10px;border-radius:20px;padding:9px;box-shadow:0 10px 24px rgba(0,0,0,.16)}
+.premium-card-motto{text-align:center;color:#f5d468;font-size:8px;letter-spacing:.11em;margin:3px 0 11px}
+.premium-card-foot{padding:11px 16px;font-size:8px;letter-spacing:.04em;background:rgba(1,26,43,.32);border-top:1px solid rgba(255,255,255,.08)}
+.premium-card-foot span:first-child{display:flex;align-items:center;gap:6px}
+.premium-card-foot i{width:6px;height:6px;border-radius:50%;background:#42d98a;box-shadow:0 0 0 3px rgba(66,217,138,.12)}
+
+@media (max-width:420px){
+  .public-finance-grid{gap:8px}
+  .public-finance-grid>div{padding:10px}
+  .public-finance-balance strong{font-size:24px}
+  .premium-card-qr{width:176px;height:176px}
+  .premium-card-identity h3{font-size:20px}
+}
