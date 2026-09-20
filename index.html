@@ -7,7 +7,7 @@
 
   <title>Portal KOM 3</title>
 
-  <link rel="stylesheet" href="style.css?v=1.4.2">
+  <link rel="stylesheet" href="style.css?v=1.4.3">
 </head>
 <body>
 
@@ -82,7 +82,7 @@
               <button
                 type="button"
                 class="text-button"
-                onclick="showToast('Fitur lupa password akan ditambahkan pada versi berikutnya.')"
+                onclick="openForgotPassword()"
               >Lupa password?</button>
             </div>
 
@@ -136,6 +136,20 @@
           </div>
 
           <form id="registerForm" onsubmit="handleRegister(event)">
+            <div class="register-photo-block">
+              <div class="profile-photo-preview" id="registerPhotoPreview">
+                <img id="registerPhotoPreviewImg" class="hidden" alt="Preview foto profil">
+                <span id="registerPhotoInitials">👤</span>
+              </div>
+              <div class="register-photo-copy">
+                <strong>Foto Profil <span class="optional">Opsional</span></strong>
+                <small>Otomatis dipotong persegi dan dikompres ke WebP agar hemat penyimpanan.</small>
+                <label class="photo-select-button" for="regPhoto">Pilih Foto</label>
+                <input id="regPhoto" class="photo-file-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="handleRegisterPhotoChange(event)">
+                <div id="regPhotoInfo" class="photo-file-info">Belum ada foto dipilih.</div>
+              </div>
+            </div>
+
             <div class="input-group">
               <label>Nama Lengkap</label>
               <div class="input-wrap">
@@ -191,6 +205,7 @@
               <div class="input-wrap">
                 <span class="input-icon">🔒</span>
                 <input id="regPassword" type="password" placeholder="Minimal 6 karakter" required>
+                <button type="button" class="eye-button" onclick="togglePasswordField('regPassword',this)" aria-label="Tampilkan password">👁</button>
               </div>
             </div>
 
@@ -199,6 +214,7 @@
               <div class="input-wrap">
                 <span class="input-icon">🔐</span>
                 <input id="regPassword2" type="password" placeholder="Ulangi password" required>
+                <button type="button" class="eye-button" onclick="togglePasswordField('regPassword2',this)" aria-label="Tampilkan konfirmasi password">👁</button>
               </div>
             </div>
 
@@ -260,10 +276,16 @@
           </div>
 
           <div class="welcome-card">
-            <div>
-              <p class="welcome-small">Selamat datang,</p>
-              <h2 id="dashboardName">-</h2>
-              <p id="dashboardSchool" class="school-name">-</p>
+            <div class="welcome-person">
+              <button type="button" class="dashboard-avatar" onclick="openMyProfile()" title="Buka profil">
+                <img id="dashboardAvatarImg" class="hidden" alt="Foto profil">
+                <span id="dashboardAvatarInitials">-</span>
+              </button>
+              <div class="welcome-copy">
+                <p class="welcome-small">Selamat datang,</p>
+                <h2 id="dashboardName">-</h2>
+                <p id="dashboardSchool" class="school-name">-</p>
+              </div>
             </div>
 
             <div id="dashboardRole" class="role-chip">ANGGOTA</div>
@@ -499,6 +521,6 @@
 
   </div>
 
-  <script src="app.js?v=1.4.2"></script>
+  <script src="app.js?v=1.4.3"></script>
 </body>
 </html>
