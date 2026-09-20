@@ -403,11 +403,11 @@ function openForgotPassword() {
     <button class="modal-close" type="button" onclick="closeModal()">×</button>
     <div class="modal-icon">🔐</div>
     <h3>Lupa Password</h3>
-    <p class="modal-subtitle">Masukkan username atau email. Kode OTP akan dikirim ke email yang terdaftar.</p>
+    <p class="modal-subtitle">Masukkan email. Kode OTP akan dikirim ke email yang terdaftar.</p>
 
     <div class="forgot-step-card">
-      <label class="modal-label">Username / Email</label>
-      <input id="forgotIdentifier" class="portal-input" type="text" placeholder="contoh: candra atau email@gmail.com" autocomplete="username">
+      <label class="modal-label">Email</label>
+      <input id="forgotIdentifier" class="portal-input" type="email" placeholder="contoh: email@gmail.com" autocomplete="email">
       <button id="forgotOtpButton" class="primary-button" type="button" onclick="requestPasswordResetOtp()">KIRIM OTP</button>
     </div>
 
@@ -428,7 +428,7 @@ async function requestPasswordResetOtp() {
   const identifier = valueOf("forgotIdentifier");
 
   if (!identifier) {
-    showToast("Masukkan username atau email.");
+    showToast("Masukkan email yang terdaftar.");
     return;
   }
 
