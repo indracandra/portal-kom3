@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.2.5
+   PORTAL KOM 3 - FRONTEND V1.3
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -37,6 +37,12 @@
    - Riwayat kas anggota compact
    - Verifikasi khusus Admin/Bendahara
    - Status pembayaran tampil pada dashboard
+
+   TAMBAHAN V1.3:
+   - Keuangan MGMP lengkap
+   - Saldo, pemasukan, pengeluaran, tunggakan kas
+   - Rekap kas anggota per bulan
+   - Laporan bulanan/tahun ajaran
 ========================================================= */
 
 const APP_CONFIG = {
@@ -76,6 +82,13 @@ const compactUI = {
   publicAnnouncements: { items: [], visible: 5 },
   kas: { payments: [], periods: [], currentPeriod: "", currentStatus: "BELUM_BAYAR", visible: 5 },
   kasReview: { items: [], tab: "MENUNGGU", query: "", visible: 5 },
+  finance: {
+    summary: null, ledger: [], members: [], monthly: [], periods: [],
+    tahunAjaran: "", period: "", tab: "SUMMARY",
+    transactionFilter: "ALL", transactionQuery: "", transactionVisible: 5,
+    memberStatus: "BELUM_BAYAR", memberQuery: "", memberVisible: 5,
+    reportVisible: 5
+  },
   portalSettings: null
 };
 
@@ -433,6 +446,12 @@ async function openAdminCenter() {
         <button type="button" class="admin-action" onclick="openKasVerification()">
           <span class="admin-action-icon">💳</span>
           <span><b>Verifikasi Kas</b><small>${escapeHtml(String(s.pendingKas || 0))} pembayaran menunggu verifikasi</small></span>
+          <span>›</span>
+        </button>
+
+        <button type="button" class="admin-action" onclick="openFinanceCenter()">
+          <span class="admin-action-icon">📊</span>
+          <span><b>Keuangan MGMP</b><small>Saldo, pemasukan, pengeluaran, rekap, dan laporan</small></span>
           <span>›</span>
         </button>` : ""}
 
@@ -2678,6 +2697,285 @@ async function savePortalSettingsFromModal(event) {
   finally { setButtonLoading("portalSettingsSaveButton", false, "SIMPAN PENGATURAN"); }
 }
 
+
+
+/* =========================================================
+   V1.3 - KEUANGAN MGMP LENGKAP
+========================================================= */
+
+function isFinanceManagerClient() {
+  if (!currentUser) return false;
+  return currentUser.role === "Admin" ||
+    (currentUser.role === "Pengurus" && String(currentUser.jabatan || "").toLowerCase() === "bendahara");
+}
+
+async function openFinanceCenter(tab = "SUMMARY") {
+  if (!isFinanceManagerClient()) {
+    await openKasSaya();
+    return;
+  }
+
+  showLoadingModal("Keuangan MGMP");
+  try {
+    const [summaryRes, ledgerRes, recapRes] = await Promise.all([
+      apiRequest("financeSummary", { token: sessionToken }),
+      apiRequest("financeTransactions", { token: sessionToken }),
+      apiRequest("financeMemberRecap", { token: sessionToken })
+    ]);
+
+    if (!summaryRes.success) throw new Error(summaryRes.message || "Gagal memuat ringkasan keuangan.");
+    if (!ledgerRes.success) throw new Error(ledgerRes.message || "Gagal memuat transaksi.");
+    if (!recapRes.success) throw new Error(recapRes.message || "Gagal memuat rekap kas.");
+
+    compactUI.finance.summary = summaryRes.summary || {};
+    compactUI.finance.monthly = summaryRes.monthly || [];
+    compactUI.finance.ledger = ledgerRes.transactions || [];
+    compactUI.finance.members = recapRes.members || [];
+    compactUI.finance.periods = recapRes.periods || [];
+    compactUI.finance.tahunAjaran = summaryRes.tahunAjaran || recapRes.tahunAjaran || "";
+    compactUI.finance.period = recapRes.periode || summaryRes.currentPeriod || "";
+    compactUI.finance.tab = tab || "SUMMARY";
+    compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE;
+    compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
+    compactUI.finance.reportVisible = COMPACT_PAGE_SIZE;
+    compactUI.finance.transactionQuery = "";
+    compactUI.finance.memberQuery = "";
+
+    renderFinanceCenter();
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
+}
+
+function renderFinanceCenter() {
+  const f = compactUI.finance;
+  const s = f.summary || {};
+  let body = "";
+
+  if (f.tab === "SUMMARY") body = renderFinanceSummaryTab();
+  if (f.tab === "TRANSACTIONS") body = renderFinanceTransactionsTab();
+  if (f.tab === "MEMBERS") body = renderFinanceMembersTab();
+  if (f.tab === "REPORT") body = renderFinanceReportTab();
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-title-row"><div class="modal-icon compact">📊</div><div><h3>Keuangan MGMP</h3><p class="modal-subtitle">${escapeHtml(f.tahunAjaran || "Tahun Ajaran")}</p></div></div>
+
+    <div class="finance-hero">
+      <small>Saldo Saat Ini</small>
+      <strong>${formatRupiah(s.saldo || 0)}</strong>
+      <span>Pemasukan ${formatRupiah(s.totalPemasukan || 0)} • Pengeluaran ${formatRupiah(s.totalPengeluaran || 0)}</span>
+    </div>
+
+    <div class="compact-tabs finance-tabs">
+      ${compactTabButton("Ringkasan", "SUMMARY", f.tab, "", "setFinanceTab")}
+      ${compactTabButton("Transaksi", "TRANSACTIONS", f.tab, "", "setFinanceTab")}
+      ${compactTabButton("Kas", "MEMBERS", f.tab, "", "setFinanceTab")}
+      ${compactTabButton("Laporan", "REPORT", f.tab, "", "setFinanceTab")}
+    </div>
+
+    ${body}
+    <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+  `);
+}
+
+function renderFinanceSummaryTab() {
+  const s = compactUI.finance.summary || {};
+  const latest = (compactUI.finance.ledger || []).filter(x => x.status === "AKTIF").slice(0, 3);
+  return `
+    <div class="finance-stat-grid">
+      ${financeStatCard("Pemasukan Bulan Ini", formatRupiah(s.pemasukanBulanIni || 0), "↗")}
+      ${financeStatCard("Pengeluaran Bulan Ini", formatRupiah(s.pengeluaranBulanIni || 0), "↘")}
+      ${financeStatCard("Kas Lunas", String(s.kasLunas || 0) + " anggota", "✓")}
+      ${financeStatCard("Belum Bayar", String(s.kasBelum || 0) + " anggota", "!")}
+    </div>
+    <div class="finance-action-row">
+      <button class="primary-button compact-primary" type="button" onclick="openFinanceTransactionForm()">+ Tambah Transaksi</button>
+      <button class="secondary-button compact-secondary" type="button" onclick="openKasVerification()">Verifikasi Kas</button>
+    </div>
+    <div class="section-mini-title top-gap">Transaksi Terbaru</div>
+    <div class="compact-list">${latest.length ? latest.map(financeTransactionCard).join("") : `<div class="empty-panel">Belum ada transaksi.</div>`}</div>
+  `;
+}
+
+function financeStatCard(label, value, icon) {
+  return `<div class="finance-stat-card"><span>${icon}</span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function setFinanceTab(tab) {
+  compactUI.finance.tab = tab;
+  compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE;
+  compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
+  compactUI.finance.reportVisible = COMPACT_PAGE_SIZE;
+  renderFinanceCenter();
+}
+
+function renderFinanceTransactionsTab() {
+  const f = compactUI.finance;
+  const q = String(f.transactionQuery || "").toLowerCase();
+  const items = (f.ledger || []).filter(item => {
+    if (f.transactionFilter !== "ALL" && item.jenis !== f.transactionFilter) return false;
+    if (!q) return true;
+    return [item.uraian, item.kategori, item.dibuatOleh, item.tanggalLabel].join(" ").toLowerCase().includes(q);
+  });
+  const visible = items.slice(0, f.transactionVisible);
+  return `
+    <div class="finance-action-row"><button class="primary-button compact-primary" type="button" onclick="openFinanceTransactionForm()">+ Tambah</button></div>
+    ${compactSearchHtml(f.transactionQuery, "filterFinanceTransactions", "Cari transaksi...")}
+    <div class="compact-tabs mini-tabs">
+      ${compactTabButton("Semua", "ALL", f.transactionFilter, items.length, "setFinanceTransactionFilter")}
+      ${compactTabButton("Masuk", "PEMASUKAN", f.transactionFilter, "", "setFinanceTransactionFilter")}
+      ${compactTabButton("Keluar", "PENGELUARAN", f.transactionFilter, "", "setFinanceTransactionFilter")}
+    </div>
+    <div class="compact-list">${visible.length ? visible.map(financeTransactionCard).join("") : `<div class="empty-panel">Tidak ada transaksi.</div>`}</div>
+    ${renderLoadMoreButton(items.length > f.transactionVisible, "loadMoreFinanceTransactions")}
+  `;
+}
+
+function financeTransactionCard(item) {
+  const isIncome = item.jenis === "PEMASUKAN";
+  const amountClass = isIncome ? "finance-in" : "finance-out";
+  const sign = isIncome ? "+" : "−";
+  const sourceLabel = item.sumber === "KAS" ? "Kas Anggota" : (item.kategori || "Transaksi");
+  const canEdit = item.dapatDiedit && item.status !== "BATAL";
+  return `<div class="finance-row ${item.status === "BATAL" ? "is-cancelled" : ""}">
+    <div class="finance-row-icon ${amountClass}">${isIncome ? "↗" : "↘"}</div>
+    <div class="finance-row-main"><strong>${escapeHtml(item.uraian || "-")}</strong><small>${escapeHtml(item.tanggalLabel || item.tanggal || "-")} • ${escapeHtml(sourceLabel)}</small>${item.status === "BATAL" ? `<span class="status-pill rejected">BATAL</span>` : ""}</div>
+    <div class="finance-row-side"><b class="${amountClass}">${sign}${formatRupiah(item.nominal || 0)}</b>${canEdit ? `<button type="button" onclick="openFinanceTransactionDetail('${escapeJs(item.id)}')">Detail</button>` : (item.linkBukti ? `<button type="button" onclick="openExternalLink('${escapeJs(item.linkBukti)}')">Bukti</button>` : "")}</div>
+  </div>`;
+}
+
+function setFinanceTransactionFilter(value) { compactUI.finance.transactionFilter = value; compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE; renderFinanceCenter(); }
+function filterFinanceTransactions(value) { compactUI.finance.transactionQuery = value || ""; compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE; renderFinanceCenter(); refocusCompactSearch(); }
+function loadMoreFinanceTransactions() { compactUI.finance.transactionVisible += COMPACT_PAGE_SIZE; renderFinanceCenter(); }
+
+async function loadFinanceMemberPeriod(period) {
+  showLoadingModal("Rekap Kas Anggota");
+  try {
+    const res = await apiRequest("financeMemberRecap", { token: sessionToken, periode: period, tahunAjaran: compactUI.finance.tahunAjaran });
+    if (!res.success) throw new Error(res.message || "Gagal memuat rekap.");
+    compactUI.finance.period = res.periode;
+    compactUI.finance.periods = res.periods || compactUI.finance.periods;
+    compactUI.finance.members = res.members || [];
+    compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
+    compactUI.finance.memberQuery = "";
+    renderFinanceCenter();
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+function renderFinanceMembersTab() {
+  const f = compactUI.finance;
+  const q = String(f.memberQuery || "").toLowerCase();
+  const items = (f.members || []).filter(item => {
+    if (f.memberStatus !== "ALL" && item.status !== f.memberStatus) return false;
+    if (!q) return true;
+    return [item.nama, item.sekolah].join(" ").toLowerCase().includes(q);
+  });
+  const counts = {};
+  (f.members || []).forEach(x => counts[x.status] = (counts[x.status] || 0) + 1);
+  const options = (f.periods || []).map(p => `<option value="${escapeHtml(p.value)}" ${p.value === f.period ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("");
+  return `
+    <label class="modal-label">Periode Kas</label><select class="portal-select full" onchange="loadFinanceMemberPeriod(this.value)">${options}</select>
+    ${compactSearchHtml(f.memberQuery, "filterFinanceMembers", "Cari anggota/sekolah...")}
+    <div class="compact-tabs finance-member-tabs">
+      ${compactTabButton("Belum", "BELUM_BAYAR", f.memberStatus, counts.BELUM_BAYAR || 0, "setFinanceMemberStatus")}
+      ${compactTabButton("Menunggu", "MENUNGGU", f.memberStatus, counts.MENUNGGU || 0, "setFinanceMemberStatus")}
+      ${compactTabButton("Lunas", "LUNAS", f.memberStatus, counts.LUNAS || 0, "setFinanceMemberStatus")}
+      ${compactTabButton("Semua", "ALL", f.memberStatus, f.members.length, "setFinanceMemberStatus")}
+    </div>
+    <div class="compact-list">${items.slice(0, f.memberVisible).map(financeMemberCard).join("") || `<div class="empty-panel">Tidak ada data pada filter ini.</div>`}</div>
+    ${renderLoadMoreButton(items.length > f.memberVisible, "loadMoreFinanceMembers")}
+  `;
+}
+
+function financeMemberCard(item) {
+  const labels = { LUNAS: "LUNAS", MENUNGGU: "MENUNGGU", DITOLAK: "DITOLAK", BELUM_BAYAR: "BELUM BAYAR" };
+  const cls = item.status === "LUNAS" ? "approved" : item.status === "MENUNGGU" ? "pending" : item.status === "DITOLAK" ? "rejected" : "neutral";
+  return `<div class="finance-member-row"><div><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.sekolah)}</small></div><div class="finance-member-side"><span class="status-pill ${cls}">${escapeHtml(labels[item.status] || item.status)}</span><small>${formatRupiah(item.nominal || 0)}</small></div></div>`;
+}
+
+function setFinanceMemberStatus(value) { compactUI.finance.memberStatus = value; compactUI.finance.memberVisible = COMPACT_PAGE_SIZE; renderFinanceCenter(); }
+function filterFinanceMembers(value) { compactUI.finance.memberQuery = value || ""; compactUI.finance.memberVisible = COMPACT_PAGE_SIZE; renderFinanceCenter(); refocusCompactSearch(); }
+function loadMoreFinanceMembers() { compactUI.finance.memberVisible += COMPACT_PAGE_SIZE; renderFinanceCenter(); }
+
+function renderFinanceReportTab() {
+  const f = compactUI.finance;
+  const rows = (f.monthly || []).slice(0, f.reportVisible).map(item => `
+    <div class="finance-report-row"><div><strong>${escapeHtml(item.label)}</strong><small>Saldo kumulatif ${formatRupiah(item.saldoKumulatif || 0)}</small></div><div><span class="finance-in">+${formatRupiah(item.pemasukan || 0)}</span><span class="finance-out">−${formatRupiah(item.pengeluaran || 0)}</span></div></div>`).join("");
+  return `<div class="finance-report-note">Laporan dihitung otomatis dari Kas LUNAS + transaksi manual aktif.</div><div class="compact-list">${rows || `<div class="empty-panel">Belum ada laporan.</div>`}</div>${renderLoadMoreButton((f.monthly || []).length > f.reportVisible, "loadMoreFinanceReport")}`;
+}
+function loadMoreFinanceReport() { compactUI.finance.reportVisible += COMPACT_PAGE_SIZE; renderFinanceCenter(); }
+
+function openFinanceTransactionForm(id = "") {
+  const item = id ? (compactUI.finance.ledger || []).find(x => x.id === id && x.dapatDiedit) : null;
+  const today = localDateInputValue();
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderFinanceCenter()">←</button><div><h3>${item ? "Edit" : "Tambah"} Transaksi</h3><p class="modal-subtitle">Pemasukan/pengeluaran selain kas anggota.</p></div></div>
+    <form onsubmit="submitFinanceTransaction(event,'${escapeJs(item ? item.id : "")}')">
+      <label class="modal-label">Tanggal</label><input id="financeDate" class="portal-input" type="date" value="${escapeHtml(item ? item.tanggal : today)}" required>
+      <div class="manager-form-grid"><div><label class="modal-label">Jenis</label><select id="financeType" class="portal-select full"><option value="PEMASUKAN" ${item && item.jenis === "PEMASUKAN" ? "selected" : ""}>Pemasukan</option><option value="PENGELUARAN" ${item && item.jenis === "PENGELUARAN" ? "selected" : ""}>Pengeluaran</option></select></div><div><label class="modal-label">Nominal</label><input id="financeAmount" class="portal-input" type="number" min="1" step="1" value="${escapeHtml(item ? String(item.nominal) : "")}" placeholder="50000" required></div></div>
+      <label class="modal-label">Kategori</label><input id="financeCategory" class="portal-input" type="text" maxlength="80" value="${escapeHtml(item ? item.kategori : "")}" placeholder="Contoh: ATK, Konsumsi, Donasi" required>
+      <label class="modal-label">Uraian</label><input id="financeDescription" class="portal-input" type="text" maxlength="250" value="${escapeHtml(item ? item.uraian : "")}" placeholder="Keterangan transaksi" required>
+      <label class="modal-label">Link Bukti (opsional)</label><input id="financeProof" class="portal-input" type="url" value="${escapeHtml(item ? item.linkBukti : "")}" placeholder="https://drive.google.com/..."><div class="file-note">Portal hanya menyimpan link bukti, bukan file.</div>
+      <label class="modal-label">Catatan (opsional)</label><textarea id="financeNote" class="portal-textarea" maxlength="500">${escapeHtml(item ? item.catatan : "")}</textarea>
+      <button id="financeSaveButton" class="primary-button" type="submit">SIMPAN TRANSAKSI</button>
+      ${item ? `<button class="danger-outline-button" type="button" onclick="cancelFinanceTransaction('${escapeJs(item.id)}')">Batalkan Transaksi</button>` : ""}
+      <button class="secondary-button" type="button" onclick="renderFinanceCenter()">← Kembali</button>
+    </form>
+  `);
+}
+
+async function submitFinanceTransaction(event, id) {
+  event.preventDefault();
+  setButtonLoading("financeSaveButton", true, "Menyimpan...");
+  try {
+    const res = await apiRequest("saveFinanceTransaction", {
+      token: sessionToken,
+      id,
+      tanggal: valueOf("financeDate"),
+      jenis: valueOf("financeType"),
+      kategori: valueOf("financeCategory"),
+      uraian: valueOf("financeDescription"),
+      nominal: Number(valueOf("financeAmount") || 0),
+      tahunAjaran: compactUI.finance.tahunAjaran,
+      linkBukti: valueOf("financeProof"),
+      catatan: valueOf("financeNote")
+    });
+    showToast(res.message);
+    if (res.success) await openFinanceCenter("TRANSACTIONS");
+  } catch (err) { showToast(err.message); }
+  finally { setButtonLoading("financeSaveButton", false, "SIMPAN TRANSAKSI"); }
+}
+
+function openFinanceTransactionDetail(id) {
+  const item = (compactUI.finance.ledger || []).find(x => x.id === id);
+  if (!item) return;
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderFinanceCenter()">←</button><div><h3>Detail Transaksi</h3><p class="modal-subtitle">${escapeHtml(item.tanggalLabel || item.tanggal)}</p></div></div>
+    <div class="payment-detail-grid">
+      ${paymentDetailRow("Jenis", item.jenis)}${paymentDetailRow("Kategori", item.kategori)}${paymentDetailRow("Uraian", item.uraian)}${paymentDetailRow("Nominal", formatRupiah(item.nominal || 0))}${paymentDetailRow("Dibuat oleh", item.dibuatOleh || "-")}${paymentDetailRow("Status", item.status)}
+    </div>
+    ${item.catatan ? `<div class="review-note-box"><small>Catatan</small><p>${escapeHtml(item.catatan)}</p></div>` : ""}
+    ${item.linkBukti ? `<button class="primary-button" type="button" onclick="openExternalLink('${escapeJs(item.linkBukti)}')">Buka Bukti</button>` : ""}
+    ${item.dapatDiedit && item.status !== "BATAL" ? `<button class="secondary-button" type="button" onclick="openFinanceTransactionForm('${escapeJs(item.id)}')">Edit Transaksi</button><button class="danger-outline-button" type="button" onclick="cancelFinanceTransaction('${escapeJs(item.id)}')">Batalkan Transaksi</button>` : ""}
+    <button class="secondary-button" type="button" onclick="renderFinanceCenter()">← Kembali</button>
+  `);
+}
+
+async function cancelFinanceTransaction(id) {
+  if (!confirm("Batalkan transaksi ini? Data tidak dihapus dan tetap ada di audit trail.")) return;
+  try {
+    const res = await apiRequest("setFinanceTransactionStatus", { token: sessionToken, id, status: "BATAL" });
+    showToast(res.message);
+    if (res.success) await openFinanceCenter("TRANSACTIONS");
+  } catch (err) { showToast(err.message); }
+}
+
+
 /* =========================================================
    FEATURE ROUTER
 ========================================================= */
@@ -2726,8 +3024,14 @@ async function openFeature(name) {
     return;
   }
 
-  if (name === "Kas Saya" || name === "Keuangan") {
+  if (name === "Kas Saya") {
     await openKasSaya();
+    return;
+  }
+
+  if (name === "Keuangan") {
+    if (isFinanceManagerClient()) await openFinanceCenter();
+    else await openKasSaya();
     return;
   }
 
@@ -2824,7 +3128,7 @@ function setNav(element, name) {
   }
 
   if (name === "Keuangan") {
-    openFeature("Kas Saya");
+    openFeature("Keuangan");
     return;
   }
 
