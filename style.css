@@ -2477,3 +2477,137 @@ button:disabled {
     align-items: flex-start;
   }
 }
+
+
+/* =========================================================
+   V1.2.5 - KAS & VERIFIKASI PEMBAYARAN
+========================================================= */
+
+.compact-qris-box { margin-top: 10px; }
+.compact-qris-image { width: min(210px, 75%); max-height: 250px; }
+
+.qris-action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.kas-current-status {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid #e1e8ef;
+  border-radius: 14px;
+  text-align: left;
+}
+
+.kas-current-status > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font-size: 17px;
+  font-weight: 900;
+  background: #ffffff;
+}
+
+.kas-current-status small,
+.kas-current-status strong,
+.kas-current-status p { display: block; margin: 0; }
+.kas-current-status small { font-size: 8px; opacity: .75; }
+.kas-current-status strong { margin-top: 2px; font-size: 11px; color: var(--navy-900); }
+.kas-current-status p { margin-top: 3px; font-size: 8px; line-height: 1.45; color: #607286; }
+.kas-status-unpaid { background: #f8fafc; }
+.kas-status-pending { background: #fff9e8; border-color: #f1dda0; }
+.kas-status-paid { background: #eefbf6; border-color: #bfe8d8; }
+.kas-status-rejected { background: #fff3f3; border-color: #f0caca; }
+
+.kas-history-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e9ef;
+  border-radius: 13px;
+  text-align: left;
+}
+
+.kas-history-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--navy-900);
+  font-weight: 900;
+}
+
+.kas-history-main { min-width: 0; }
+.kas-history-main strong,
+.kas-history-main small { display: block; }
+.kas-history-main strong { color: var(--navy-900); font-size: 10px; }
+.kas-history-main small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+
+.payment-safety-note {
+  margin: 8px 0 12px;
+  padding: 9px 10px;
+  background: #eef6ff;
+  border: 1px solid #d5e7fa;
+  border-radius: 11px;
+  color: #48627d;
+  font-size: 8px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.optional-label { color: var(--muted); font-size: 8px; font-weight: 600; }
+
+.payment-detail-list {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 12px;
+}
+
+.payment-detail-list > div {
+  padding: 9px 10px;
+  background: #f8fafc;
+  border: 1px solid #e5ebf0;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.payment-detail-list small,
+.payment-detail-list strong { display: block; }
+.payment-detail-list small { color: var(--muted); font-size: 8px; }
+.payment-detail-list strong { margin-top: 2px; color: var(--navy-900); font-size: 10px; word-break: break-word; }
+
+.kas-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.status-pill.status-rejected,
+.status-rejected { background: #fdecec; color: #a83a3a; }
+.status-pill.status-neutral,
+.status-neutral { background: #edf1f5; color: #607286; }
+
+@media (max-width: 380px) {
+  .qris-action-row { grid-template-columns: 1fr; }
+  .kas-history-card { grid-template-columns: 32px minmax(0, 1fr); }
+  .kas-history-card .status-pill { grid-column: 2; justify-self: start; }
+}
