@@ -557,9 +557,13 @@ async function handleRegisterPhotoChange(event) {
     updatePhotoPreview("registerPhotoPreviewImg", "registerPhotoInitials", pendingRegisterPhoto.dataUrl);
     const info = document.getElementById("regPhotoInfo");
     if (info) info.textContent = `Siap diunggah • ${formatFileSize(pendingRegisterPhoto.bytes)} • WebP 180×180`;
+    const submitBtn = document.getElementById("registerSubmitButton");
+    if (submitBtn) submitBtn.disabled = false;
   } catch (err) {
     pendingRegisterPhoto = null;
     if (event.target) event.target.value = "";
+    const submitBtn = document.getElementById("registerSubmitButton");
+    if (submitBtn) submitBtn.disabled = true;
     showToast(err.message || "Foto tidak dapat diproses.");
   }
 }
@@ -994,6 +998,13 @@ async function handleRegister(event) {
   const password = document.getElementById("regPassword").value;
   const password2 = document.getElementById("regPassword2").value;
 
+  if (!pendingRegisterPhoto || !pendingRegisterPhoto.base64) {
+    showToast("Foto profil wajib diisi sebelum mendaftar.");
+    const photoInput = document.getElementById("regPhoto");
+    if (photoInput) photoInput.focus();
+    return;
+  }
+
   if (!nama || !sekolah || !email || !username || !password) {
     showToast("Lengkapi data wajib.");
     return;
@@ -1036,7 +1047,9 @@ async function handleRegister(event) {
       const info = document.getElementById("regPhotoInfo");
       if (previewImg) { previewImg.classList.add("hidden"); previewImg.removeAttribute("src"); }
       if (previewInitials) previewInitials.classList.remove("hidden");
-      if (info) info.textContent = "Belum ada foto dipilih.";
+      if (info) info.textContent = "Foto profil wajib diisi.";
+      const submitBtn = document.getElementById("registerSubmitButton");
+      if (submitBtn) submitBtn.disabled = true;
       setTimeout(showLogin, 1000);
     }
   } catch (err) {
