@@ -1,1308 +1,504 @@
 <!DOCTYPE html>
 <html lang="id">
-
 <head>
-
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="theme-color" content="#0b3154">
 
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0"
-  >
+  <title>Portal KOM 3</title>
 
-  <meta
-    name="theme-color"
-    content="#0b3154"
-  >
-
-  <title>
-    Portal KOM 3
-  </title>
-
-  <link
-    rel="stylesheet"
-    href="style.css"
-  >
-
+  <link rel="stylesheet" href="style.css?v=1.2.5.2">
 </head>
-
-
 <body>
 
-<div id="app">
-
-
-<!-- ==================================================
-LOGIN
-=================================================== -->
-
-<section
-  id="loginPage"
-  class="page auth-page"
->
-
-<div class="auth-shell">
-
-
-<div class="brand-area">
-
-<div class="logo-ring">
-
-<img
-src="assets/logo.jpg"
-alt="Logo MGMP Bahasa Inggris Komisariat 3"
-class="main-logo"
->
-
-</div>
-
-
-<div class="brand-kicker">
-MGMP BAHASA INGGRIS SMP
-</div>
-
-
-<h1 class="brand-title">
-PORTAL KOM 3
-</h1>
-
-
-<p class="brand-subtitle">
-Komisariat 3 Kabupaten Ciamis
-</p>
-
-</div>
-
-
-
-<div class="auth-card">
-
-
-<div class="auth-heading">
-
-<p class="eyebrow">
-SELAMAT DATANG
-</p>
-
-<h2>
-Masuk ke Portal
-</h2>
-
-<p>
-Satu portal untuk belajar,
-berbagi, dan tumbuh bersama.
-</p>
-
-</div>
-
-
-<form
-id="loginForm"
-onsubmit="handleLogin(event)"
->
-
-
-<div class="input-group">
-
-<label for="loginUser">
-User / Email
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-👤
-</span>
-
-<input
-id="loginUser"
-type="text"
-placeholder="Masukkan username atau email"
-autocomplete="username"
->
-
-</div>
-
-</div>
-
-
-
-<div class="input-group">
-
-<label for="loginPassword">
-Password
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-🔒
-</span>
-
-<input
-id="loginPassword"
-type="password"
-placeholder="Masukkan password"
-autocomplete="current-password"
->
-
-
-<button
-type="button"
-class="eye-button"
-onclick="togglePassword()"
-aria-label="Tampilkan password"
->
-👁
-</button>
-
-</div>
-
-</div>
-
-
-
-<div class="login-options">
-
-<label class="remember-wrap">
-
-<input
-type="checkbox"
-id="rememberMe"
->
-
-<span>
-Ingat saya
-</span>
-
-</label>
-
-
-<button
-type="button"
-class="text-button"
-onclick="showToast('Fitur lupa password akan ditambahkan pada versi berikutnya.')"
->
-Lupa password?
-</button>
-
-</div>
-
-
-
-<button
-id="loginSubmitButton"
-type="submit"
-class="primary-button"
->
-MASUK →
-</button>
-
-</form>
-
-
-
-<div class="register-row">
-
-<span>
-Belum punya akun?
-</span>
-
-<button
-type="button"
-class="register-button"
-onclick="showRegister()"
->
-DAFTAR
-</button>
-
-</div>
-
-
-
-<div class="secure-note">
-
-<span class="secure-icon">
-🛡️
-</span>
-
-<span>
-Portal resmi MGMP Bahasa Inggris
-SMP Komisariat 3
-</span>
-
-</div>
-
-</div>
-
-
-
-<div class="auth-footer">
-
-<div class="tagline">
-Learn • Share • Inspire • Grow
-</div>
-
-<div class="footer-small">
-Satu Portal • Satu Komunitas • Tumbuh Bersama
-</div>
-
-</div>
-
-
-</div>
-
-</section>
-
-
-
-<!-- ==================================================
-REGISTER
-=================================================== -->
-
-<section
-id="registerPage"
-class="page auth-page hidden"
->
-
-<div class="auth-shell">
-
-
-<div class="mini-topbar">
-
-<button
-class="back-button"
-type="button"
-onclick="showLogin()"
->
-←
-</button>
-
-<div>
-
-<strong>
-Pendaftaran Anggota
-</strong>
-
-<small>
-Portal KOM 3
-</small>
-
-</div>
-
-</div>
-
-
-
-<div class="auth-card register-card">
-
-
-<div class="register-logo">
-
-<img
-src="assets/logo.jpg"
-alt="Logo KOM 3"
->
-
-</div>
-
-
-
-<div class="auth-heading">
-
-<p class="eyebrow">
-DAFTAR ANGGOTA
-</p>
-
-<h2>
-Buat Akun Baru
-</h2>
-
-<p>
-Setelah mendaftar,
-akun akan diverifikasi
-oleh Pengurus atau Admin.
-</p>
-
-</div>
-
-
-
-<form
-id="registerForm"
-onsubmit="handleRegister(event)"
->
-
-
-<div class="input-group">
-
-<label>
-Nama Lengkap
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-👤
-</span>
-
-<input
-id="regName"
-type="text"
-placeholder="Nama lengkap"
-required
->
-
-</div>
-
-</div>
-
-
-
-<div class="input-group">
-
-<label>
-NIP / NIK
-<span class="optional">
-Opsional
-</span>
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-🪪
-</span>
-
-<input
-id="regNip"
-type="text"
-placeholder="NIP / NIK"
->
-
-</div>
-
-</div>
-
-
-
-<div class="input-group">
-
-<label>
-Sekolah
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-🏫
-</span>
-
-<input
-id="regSchool"
-type="text"
-placeholder="Nama sekolah"
-required
->
-
-</div>
-
-</div>
-
-
-
-<div class="form-grid">
-
-
-<div class="input-group">
-
-<label>
-Email
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-✉️
-</span>
-
-<input
-id="regEmail"
-type="email"
-placeholder="Email"
-required
->
-
-</div>
-
-</div>
-
-
-
-<div class="input-group">
-
-<label>
-WhatsApp
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-📱
-</span>
-
-<input
-id="regWa"
-type="text"
-placeholder="Nomor WhatsApp"
->
-
-</div>
-
-</div>
-
-
-</div>
-
-
-
-<div class="input-group">
-
-<label>
-Username
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-@
-</span>
-
-<input
-id="regUsername"
-type="text"
-placeholder="Buat username"
-required
->
-
-</div>
-
-</div>
-
-
-
-<div class="input-group">
-
-<label>
-Password
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-🔒
-</span>
-
-<input
-id="regPassword"
-type="password"
-placeholder="Minimal 6 karakter"
-required
->
-
-</div>
-
-</div>
-
-
-
-<div class="input-group">
-
-<label>
-Konfirmasi Password
-</label>
-
-<div class="input-wrap">
-
-<span class="input-icon">
-🔐
-</span>
-
-<input
-id="regPassword2"
-type="password"
-placeholder="Ulangi password"
-required
->
-
-</div>
-
-</div>
-
-
-
-<button
-id="registerSubmitButton"
-type="submit"
-class="primary-button"
->
-DAFTAR SEKARANG
-</button>
-
-
-<button
-type="button"
-class="secondary-button"
-onclick="showLogin()"
->
-Kembali ke Login
-</button>
-
-
-</form>
-
-</div>
-
-</div>
-
-</section>
-
-
-
-<!-- ==================================================
-DASHBOARD
-=================================================== -->
-
-<section
-id="dashboardPage"
-class="page app-page hidden"
->
-
-
-<div class="mobile-app">
-
-
-<header class="app-header">
-
-
-<div class="header-row">
-
-
-<div class="header-brand">
-
-<img
-src="assets/logo.jpg"
-alt="Logo KOM 3"
-class="header-logo"
->
-
-
-<div>
-
-<span class="header-kicker">
-PORTAL KOM 3
-</span>
-
-<strong>
-MGMP Bahasa Inggris
-</strong>
-
-</div>
-
-</div>
-
-
-
-<div class="header-actions">
-
-
-<button
-id="adminCenterButton"
-type="button"
-class="header-icon-button hidden"
-onclick="openAdminCenter()"
-title="Admin Center"
->
-⚙️
-</button>
-
-
-<button
-type="button"
-class="header-icon-button"
-onclick="showToast('Tidak ada notifikasi baru.')"
-title="Notifikasi"
->
-🔔
-</button>
-
-
-<button
-id="logoutButton"
-type="button"
-class="header-icon-button danger-soft"
-onclick="logout()"
-title="Keluar"
->
-↪
-</button>
-
-
-</div>
-
-</div>
-
-
-
-<div class="welcome-card">
-
-
-<div>
-
-<p class="welcome-small">
-Selamat datang,
-</p>
-
-<h2 id="dashboardName">
--
-</h2>
-
-<p
-id="dashboardSchool"
-class="school-name"
->
--
-</p>
-
-</div>
-
-
-<div
-id="dashboardRole"
-class="role-chip"
->
-ANGGOTA
-</div>
-
-
-</div>
-
-</header>
-
-
-
-<main class="app-content">
-
-
-<!-- MEMBER CARD -->
-
-<section class="member-card">
-
-
-<div class="member-card-top">
-
-
-<div>
-
-<span class="card-label">
-KOM 3 POINTS
-</span>
-
-<div class="points-value">
-
-<span>
-⭐
-</span>
-
-<strong>
-0
-</strong>
-
-</div>
-
-</div>
-
-
-
-<div class="member-id">
-
-<small>
-MEMBER ID
-</small>
-
-<strong>
--
-</strong>
-
-</div>
-
-
-</div>
-
-
-
-<div class="member-card-footer">
-
-<span>
-🏅 Tumbuh • Berbagi • Menginspirasi
-</span>
-
-<button
-type="button"
-onclick="openFeature('Kartu Anggota Digital')"
->
-Kartu Saya →
-</button>
-
-</div>
-
-
-</section>
-
-
-
-<!-- STATS -->
-
-<section class="section-block">
-
-
-<div class="section-heading">
-
-<h3>
-Ringkasan Saya
-</h3>
-
-</div>
-
-
-
-<div class="stat-grid">
-
-
-<div class="mini-stat">
-
-<div class="stat-icon blue">
-✓
-</div>
-
-<div>
-
-<small>
-Kehadiran
-</small>
-
-<strong>
-0 / 0
-</strong>
-
-</div>
-
-</div>
-
-
-
-<div class="mini-stat">
-
-<div class="stat-icon gold">
-📜
-</div>
-
-<div>
-
-<small>
-Sertifikat
-</small>
-
-<strong>
-0
-</strong>
-
-</div>
-
-</div>
-
-
-
-<div class="mini-stat">
-
-<div class="stat-icon orange">
-🔥
-</div>
-
-<div>
-
-<small>
-Streak
-</small>
-
-<strong>
-0x
-</strong>
-
-</div>
-
-</div>
-
-
-
-<div class="mini-stat">
-
-<div class="stat-icon green">
-💰
-</div>
-
-<div>
-
-<small>
-Kas Bulan Ini
-</small>
-
-<strong>
-Belum ada
-</strong>
-
-</div>
-
-</div>
-
-
-</div>
-
-</section>
-
-
-
-<!-- QUICK MENU -->
-
-<section class="section-block">
-
-
-<div class="section-heading">
-
-<h3>
-Menu Utama
-</h3>
-
-<button
-class="link-small"
-type="button"
-onclick="showAllMenu()"
->
-Lihat Semua
-</button>
-
-</div>
-
-
-
-<div class="quick-menu">
-
-
-<button
-class="quick-item"
-type="button"
-onclick="openFeature('Hari Belajar Guru')"
->
-
-<div class="quick-icon q-blue">
-🎓
-</div>
-
-<span>
-Hari Belajar
-</span>
-
-</button>
-
-
-
-<button
-class="quick-item"
-type="button"
-onclick="openFeature('Bank Praktik Baik')"
->
-
-<div class="quick-icon q-purple">
-💡
-</div>
-
-<span>
-Praktik Baik
-</span>
-
-</button>
-
-
-
-<button
-class="quick-item"
-type="button"
-onclick="openFeature('Perangkat Pembelajaran')"
->
-
-<div class="quick-icon q-green">
-📚
-</div>
-
-<span>
-Perangkat
-</span>
-
-</button>
-
-
-
-<button
-class="quick-item"
-type="button"
-onclick="openFeature('Sertifikat Saya')"
->
-
-<div class="quick-icon q-gold">
-🏆
-</div>
-
-<span>
-Sertifikat
-</span>
-
-</button>
-
-
-
-<button
-class="quick-item"
-type="button"
-onclick="openFeature('Kehadiran Saya')"
->
-
-<div class="quick-icon q-cyan">
-✅
-</div>
-
-<span>
-Kehadiran
-</span>
-
-</button>
-
-
-
-<button
-class="quick-item has-badge"
-type="button"
-onclick="openFeature('Izin Tidak Hadir')"
->
-
-<div class="quick-icon q-orange">
-📝
-</div>
-
-<span>
-Izin
-</span>
-
-<b
-id="izinPendingBadge"
-class="menu-badge hidden"
->
-0
-</b>
-
-</button>
-
-
-
-<button
-class="quick-item"
-type="button"
-onclick="openFeature('Kas Saya')"
->
-
-<div class="quick-icon q-emerald">
-💰
-</div>
-
-<span>
-Kas Saya
-</span>
-
-</button>
-
-
-
-<button
-class="quick-item"
-type="button"
-onclick="openFeature('Dokumen MGMP')"
->
-
-<div class="quick-icon q-navy">
-📁
-</div>
-
-<span>
-Dokumen
-</span>
-
-</button>
-
-
-</div>
-
-</section>
-
-
-
-<!-- AGENDA -->
-
-<section class="section-block">
-
-
-<div class="section-heading">
-
-<h3>
-Agenda Berikutnya
-</h3>
-
-<button
-class="link-small"
-type="button"
-onclick="openFeature('Agenda MGMP')"
->
-Semua
-</button>
-
-</div>
-
-
-
-<article class="agenda-card">
-
-<div class="empty-agenda">
-Memuat agenda...
-</div>
-
-</article>
-
-
-</section>
-
-
-
-<!-- PENGUMUMAN -->
-
-<section class="section-block bottom-space">
-
-
-<div class="section-heading">
-
-<h3>
-Pengumuman
-</h3>
-
-<button
-class="link-small"
-type="button"
-onclick="openFeature('Pengumuman')"
->
-Lihat Semua
-</button>
-
-</div>
-
-
-
-<article class="announcement-card">
-
-<div class="announcement-icon">
-📢
-</div>
-
-<div>
-
-<h4>
-Memuat pengumuman...
-</h4>
-
-</div>
-
-</article>
-
-
-</section>
-
-
-</main>
-
-
-
-<nav class="bottom-nav">
-
-
-<button
-class="nav-item active"
-type="button"
-onclick="setNav(this,'Home')"
->
-
-<span>
-🏠
-</span>
-
-<small>
-Home
-</small>
-
-</button>
-
-
-
-<button
-class="nav-item"
-type="button"
-onclick="setNav(this,'Agenda')"
->
-
-<span>
-📅
-</span>
-
-<small>
-Agenda
-</small>
-
-</button>
-
-
-
-<button
-class="nav-center"
-type="button"
-onclick="openFeature('Kartu Anggota Digital')"
->
-
-<span>
-QR
-</span>
-
-</button>
-
-
-
-<button
-class="nav-item"
-type="button"
-onclick="setNav(this,'Keuangan')"
->
-
-<span>
-💳
-</span>
-
-<small>
-Keuangan
-</small>
-
-</button>
-
-
-
-<button
-class="nav-item"
-type="button"
-onclick="setNav(this,'Profil')"
->
-
-<span>
-👤
-</span>
-
-<small>
-Profil
-</small>
-
-</button>
-
-
-</nav>
-
-
-</div>
-
-</section>
-
-
-
-<div
-id="toast"
-class="toast hidden"
->
-</div>
-
-
-
-<div
-id="featureModal"
-class="modal-overlay hidden"
-onclick="closeModalFromOverlay(event)"
->
-
-
-<div class="modal-card">
-
-
-<div class="modal-handle">
-</div>
-
-
-<button
-class="modal-close"
-type="button"
-onclick="closeModal()"
->
-×
-</button>
-
-
-<div class="modal-icon">
-🚀
-</div>
-
-
-<h3 id="modalTitle">
-Fitur
-</h3>
-
-
-<p class="modal-subtitle">
-
-Fitur ini sudah masuk dalam blueprint
-Portal KOM 3 dan akan diaktifkan pada
-tahap pengembangan berikutnya.
-
-</p>
-
-
-<button
-class="primary-button"
-type="button"
-onclick="closeModal()"
->
-Mengerti
-</button>
-
-
-</div>
-
-</div>
-
-
-</div>
-
-
-<script src="app.js"></script>
-
+  <div id="app">
+
+    <!-- ==================================================
+         LOGIN
+    =================================================== -->
+    <section id="loginPage" class="page auth-page">
+      <div class="auth-shell">
+
+        <div class="brand-area">
+          <div class="logo-ring">
+            <img
+              src="assets/logo.jpg"
+              alt="Logo MGMP Bahasa Inggris Komisariat 3"
+              class="main-logo"
+            >
+          </div>
+
+          <div class="brand-kicker">MGMP BAHASA INGGRIS SMP</div>
+          <h1 class="brand-title">PORTAL KOM 3</h1>
+          <p class="brand-subtitle">Komisariat 3 Kabupaten Ciamis</p>
+        </div>
+
+        <div class="auth-card">
+          <div class="auth-heading">
+            <p class="eyebrow">SELAMAT DATANG</p>
+            <h2>Masuk ke Portal</h2>
+            <p>Satu portal untuk belajar, berbagi, dan tumbuh bersama.</p>
+          </div>
+
+          <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="input-group">
+              <label for="loginUser">User / Email</label>
+              <div class="input-wrap">
+                <span class="input-icon">👤</span>
+                <input
+                  id="loginUser"
+                  type="text"
+                  placeholder="Masukkan username atau email"
+                  autocomplete="username"
+                >
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label for="loginPassword">Password</label>
+              <div class="input-wrap">
+                <span class="input-icon">🔒</span>
+                <input
+                  id="loginPassword"
+                  type="password"
+                  placeholder="Masukkan password"
+                  autocomplete="current-password"
+                >
+                <button
+                  type="button"
+                  class="eye-button"
+                  onclick="togglePassword()"
+                  aria-label="Tampilkan password"
+                >👁</button>
+              </div>
+            </div>
+
+            <div class="login-options">
+              <label class="remember-wrap">
+                <input type="checkbox" id="rememberMe">
+                <span>Ingat saya</span>
+              </label>
+
+              <button
+                type="button"
+                class="text-button"
+                onclick="showToast('Fitur lupa password akan ditambahkan pada versi berikutnya.')"
+              >Lupa password?</button>
+            </div>
+
+            <button id="loginSubmitButton" type="submit" class="primary-button">
+              MASUK →
+            </button>
+          </form>
+
+          <div class="register-row">
+            <span>Belum punya akun?</span>
+            <button type="button" class="register-button" onclick="showRegister()">DAFTAR</button>
+          </div>
+
+          <div class="secure-note">
+            <span class="secure-icon">🛡️</span>
+            <span>Portal resmi MGMP Bahasa Inggris SMP Komisariat 3</span>
+          </div>
+        </div>
+
+        <div class="auth-footer">
+          <div class="tagline">Learn • Share • Inspire • Grow</div>
+          <div class="footer-small">Satu Portal • Satu Komunitas • Tumbuh Bersama</div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ==================================================
+         REGISTER
+    =================================================== -->
+    <section id="registerPage" class="page auth-page hidden">
+      <div class="auth-shell">
+
+        <div class="mini-topbar">
+          <button class="back-button" type="button" onclick="showLogin()">←</button>
+          <div>
+            <strong>Pendaftaran Anggota</strong>
+            <small>Portal KOM 3</small>
+          </div>
+        </div>
+
+        <div class="auth-card register-card">
+          <div class="register-logo">
+            <img src="assets/logo.jpg" alt="Logo KOM 3">
+          </div>
+
+          <div class="auth-heading">
+            <p class="eyebrow">DAFTAR ANGGOTA</p>
+            <h2>Buat Akun Baru</h2>
+            <p>Setelah mendaftar, akun akan diverifikasi oleh Pengurus atau Admin.</p>
+          </div>
+
+          <form id="registerForm" onsubmit="handleRegister(event)">
+            <div class="input-group">
+              <label>Nama Lengkap</label>
+              <div class="input-wrap">
+                <span class="input-icon">👤</span>
+                <input id="regName" type="text" placeholder="Nama lengkap" required>
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label>NIP / NIK <span class="optional">Opsional</span></label>
+              <div class="input-wrap">
+                <span class="input-icon">🪪</span>
+                <input id="regNip" type="text" placeholder="NIP / NIK">
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label>Sekolah</label>
+              <div class="input-wrap">
+                <span class="input-icon">🏫</span>
+                <input id="regSchool" type="text" placeholder="Nama sekolah" required>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="input-group">
+                <label>Email</label>
+                <div class="input-wrap">
+                  <span class="input-icon">✉️</span>
+                  <input id="regEmail" type="email" placeholder="Email" required>
+                </div>
+              </div>
+
+              <div class="input-group">
+                <label>WhatsApp</label>
+                <div class="input-wrap">
+                  <span class="input-icon">📱</span>
+                  <input id="regWa" type="text" placeholder="Nomor WhatsApp">
+                </div>
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label>Username</label>
+              <div class="input-wrap">
+                <span class="input-icon">@</span>
+                <input id="regUsername" type="text" placeholder="Buat username" required>
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label>Password</label>
+              <div class="input-wrap">
+                <span class="input-icon">🔒</span>
+                <input id="regPassword" type="password" placeholder="Minimal 6 karakter" required>
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label>Konfirmasi Password</label>
+              <div class="input-wrap">
+                <span class="input-icon">🔐</span>
+                <input id="regPassword2" type="password" placeholder="Ulangi password" required>
+              </div>
+            </div>
+
+            <button id="registerSubmitButton" type="submit" class="primary-button">
+              DAFTAR SEKARANG
+            </button>
+
+            <button type="button" class="secondary-button" onclick="showLogin()">
+              Kembali ke Login
+            </button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ==================================================
+         DASHBOARD
+    =================================================== -->
+    <section id="dashboardPage" class="page app-page hidden">
+      <div class="mobile-app">
+
+        <!-- HEADER -->
+        <header class="app-header">
+          <div class="header-row">
+
+            <div class="header-brand">
+              <img src="assets/logo.jpg" alt="Logo KOM 3" class="header-logo">
+              <div>
+                <span class="header-kicker">PORTAL KOM 3</span>
+                <strong>MGMP Bahasa Inggris</strong>
+              </div>
+            </div>
+
+            <div class="header-actions">
+              <button
+                id="adminCenterButton"
+                type="button"
+                class="header-icon-button hidden"
+                onclick="openAdminCenter()"
+                title="Admin Center"
+              >⚙️</button>
+
+              <button
+                type="button"
+                class="header-icon-button"
+                onclick="showToast('Tidak ada notifikasi baru.')"
+                title="Notifikasi"
+              >🔔</button>
+
+              <button
+                id="logoutButton"
+                type="button"
+                class="header-icon-button danger-soft"
+                onclick="logout()"
+                title="Keluar"
+              >↪</button>
+            </div>
+          </div>
+
+          <div class="welcome-card">
+            <div>
+              <p class="welcome-small">Selamat datang,</p>
+              <h2 id="dashboardName">-</h2>
+              <p id="dashboardSchool" class="school-name">-</p>
+            </div>
+
+            <div id="dashboardRole" class="role-chip">ANGGOTA</div>
+          </div>
+        </header>
+
+
+        <!-- CONTENT -->
+        <main class="app-content">
+
+          <!-- MEMBER CARD -->
+          <section class="member-card">
+            <div class="member-card-top">
+              <div>
+                <span class="card-label">KOM 3 POINTS</span>
+                <div class="points-value">
+                  <span>⭐</span>
+                  <strong>0</strong>
+                </div>
+              </div>
+
+              <div class="member-id">
+                <small>MEMBER ID</small>
+                <strong>-</strong>
+              </div>
+            </div>
+
+            <div class="member-card-footer">
+              <span>🏅 Tumbuh • Berbagi • Menginspirasi</span>
+              <button type="button" onclick="openFeature('Kartu Anggota Digital')">Kartu Saya →</button>
+            </div>
+          </section>
+
+
+
+
+          <!-- JADWAL SALAT - V1.2.4 / tetap pada V1.2.5 -->
+          <section id="prayerSection" class="section-block compact-widget-section">
+            <button type="button" class="prayer-compact-card" onclick="openPrayerTimes()">
+              <div class="prayer-compact-icon">🕌</div>
+              <div class="prayer-compact-main">
+                <small id="prayerLocation">Kawali, Ciamis</small>
+                <strong><span id="prayerNextName">Memuat jadwal...</span> <b id="prayerNextTime">--:-- WIB</b></strong>
+                <span>Waktu salat berikutnya</span>
+              </div>
+              <div class="prayer-compact-arrow">›</div>
+            </button>
+          </section>
+
+
+          <!-- STATS -->
+          <section class="section-block">
+            <div class="section-heading">
+              <h3>Ringkasan Saya</h3>
+            </div>
+
+            <div class="stat-grid">
+              <div class="mini-stat">
+                <div class="stat-icon blue">✓</div>
+                <div>
+                  <small>Kehadiran</small>
+                  <strong>0 / 0</strong>
+                </div>
+              </div>
+
+              <div class="mini-stat">
+                <div class="stat-icon gold">📜</div>
+                <div>
+                  <small>Sertifikat</small>
+                  <strong>0</strong>
+                </div>
+              </div>
+
+              <div class="mini-stat">
+                <div class="stat-icon orange">🔥</div>
+                <div>
+                  <small>Streak</small>
+                  <strong>0x</strong>
+                </div>
+              </div>
+
+              <div class="mini-stat">
+                <div class="stat-icon green">💰</div>
+                <div>
+                  <small>Kas Bulan Ini</small>
+                  <strong>Belum ada</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+
+          <!-- QUICK MENU -->
+          <section class="section-block">
+            <div class="section-heading">
+              <h3>Menu Utama</h3>
+              <button class="link-small" type="button" onclick="showAllMenu()">Lihat Semua</button>
+            </div>
+
+            <div class="quick-menu">
+              <button class="quick-item" type="button" onclick="openFeature('Hari Belajar Guru')">
+                <div class="quick-icon q-blue">🎓</div>
+                <span>Hari Belajar</span>
+              </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('Bank Praktik Baik')">
+                <div class="quick-icon q-purple">💡</div>
+                <span>Praktik Baik</span>
+              </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('Perangkat Pembelajaran')">
+                <div class="quick-icon q-green">📚</div>
+                <span>Perangkat</span>
+              </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('Sertifikat Saya')">
+                <div class="quick-icon q-gold">🏆</div>
+                <span>Sertifikat</span>
+              </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('Kehadiran Saya')">
+                <div class="quick-icon q-cyan">✅</div>
+                <span>Kehadiran</span>
+              </button>
+
+              <button class="quick-item has-badge" type="button" onclick="openFeature('Izin Tidak Hadir')">
+                <div class="quick-icon q-orange">📝</div>
+                <span>Izin</span>
+                <b id="izinPendingBadge" class="menu-badge hidden">0</b>
+              </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('Kas Saya')">
+                <div class="quick-icon q-emerald">💰</div>
+                <span>Kas Saya</span>
+              </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('Dokumen MGMP')">
+                <div class="quick-icon q-navy">📁</div>
+                <span>Dokumen</span>
+              </button>
+            </div>
+          </section>
+
+
+          <!-- AGENDA -->
+          <section class="section-block">
+            <div class="section-heading">
+              <h3>Agenda Berikutnya</h3>
+              <button class="link-small" type="button" onclick="openFeature('Agenda MGMP')">Semua</button>
+            </div>
+
+            <article class="agenda-card">
+              <div class="empty-agenda">Memuat agenda...</div>
+            </article>
+          </section>
+
+
+          <!-- PENGUMUMAN -->
+          <section class="section-block bottom-space">
+            <div class="section-heading">
+              <h3>Pengumuman</h3>
+              <button class="link-small" type="button" onclick="openFeature('Pengumuman')">Lihat Semua</button>
+            </div>
+
+            <article class="announcement-card">
+              <div class="announcement-icon">📢</div>
+              <div>
+                <h4>Memuat pengumuman...</h4>
+              </div>
+            </article>
+          </section>
+        </main>
+
+
+        <!-- BOTTOM NAV -->
+        <nav class="bottom-nav">
+          <button class="nav-item active" type="button" onclick="setNav(this,'Home')">
+            <span>🏠</span>
+            <small>Home</small>
+          </button>
+
+          <button class="nav-item" type="button" onclick="setNav(this,'Agenda')">
+            <span>📅</span>
+            <small>Agenda</small>
+          </button>
+
+          <button class="nav-center" type="button" onclick="openFeature('Kartu Anggota Digital')">
+            <span>QR</span>
+          </button>
+
+          <button class="nav-item" type="button" onclick="setNav(this,'Keuangan')">
+            <span>💳</span>
+            <small>Keuangan</small>
+          </button>
+
+          <button class="nav-item" type="button" onclick="setNav(this,'Profil')">
+            <span>👤</span>
+            <small>Profil</small>
+          </button>
+        </nav>
+      </div>
+    </section>
+
+
+    <!-- ==================================================
+         TOAST
+    =================================================== -->
+    <div id="toast" class="toast hidden"></div>
+
+
+    <!-- ==================================================
+         MODAL GLOBAL
+    =================================================== -->
+    <div
+      id="featureModal"
+      class="modal-overlay hidden"
+      onclick="closeModalFromOverlay(event)"
+    >
+      <div class="modal-card">
+        <div class="modal-handle"></div>
+
+        <button class="modal-close" type="button" onclick="closeModal()">×</button>
+
+        <div class="modal-icon">🚀</div>
+        <h3 id="modalTitle">Fitur</h3>
+        <p class="modal-subtitle">
+          Fitur ini sudah masuk dalam blueprint Portal KOM 3 dan akan diaktifkan pada tahap pengembangan berikutnya.
+        </p>
+
+        <button class="primary-button" type="button" onclick="closeModal()">Mengerti</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js?v=1.2.5.2"></script>
 </body>
-
 </html>
