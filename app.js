@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.4.2
+   PORTAL KOM 3 - FRONTEND V1.4.3
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -61,6 +61,12 @@
    - Keuangan Manager: lazy-load data berat per tab
    - Scanner QR tanpa refresh dashboard setiap peserta
    - Premium scan bell + toggle suara
+
+   TAMBAHAN V1.4.3:
+   - Lupa password via OTP email
+   - Ikon mata pada password pendaftaran/reset
+   - Foto profil dikompres WebP sebelum dikirim
+   - Avatar dashboard + pembaruan foto lewat menu Profil
 ========================================================= */
 
 const APP_CONFIG = {
@@ -118,13 +124,16 @@ const compactUI = {
 
 let scanAudioContext = null;
 let portalWarmupStarted = false;
+let pendingRegisterPhoto = null;
+let pendingProfilePhoto = null;
+let forgotResetState = { identifier: "", maskedEmail: "" };
 
 
 /* =========================================================
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v142_cache_";
+const API_CACHE_PREFIX = "kom3_v143_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -159,7 +168,8 @@ const API_MUTATION_ACTIONS = new Set([
   "saveMeetingDocument", "setMeetingDocumentStatus",
   "savePortalSettings", "submitKasPayment", "reviewKasPayment",
   "saveFinanceTransaction", "setFinanceTransactionStatus",
-  "rotateMyQrToken", "scanAttendanceQr"
+  "rotateMyQrToken", "scanAttendanceQr",
+  "resetPasswordWithOtp", "updateProfilePhoto"
 ]);
 
 const apiMemoryCache = new Map();
@@ -349,8 +359,430 @@ function showDashboard() {
 ========================================================= */
 
 function togglePassword() {
-  const input = document.getElementById("loginPassword");
-  input.type = input.type === "password" ? "text" : "password";
+  togglePasswordField("loginPassword");
+}
+
+function togglePasswordField(inputId, button) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  const show = input.type === "password";
+  input.type = show ? "text" : "password";
+
+  const btn = button || (input.parentElement ? input.parentElement.querySelector(".eye-button") : null);
+  if (btn) {
+    btn.textContent = show ? "🙈" : "👁";
+    btn.setAttribute("aria-label", show ? "Sembunyikan password" : "Tampilkan password");
+  }
+}
+
+
+
+/* =========================================================
+   V1.4.3 - LUPA PASSWORD VIA OTP EMAIL
+========================================================= */
+
+function openForgotPassword() {
+  forgotResetState = { identifier: "", maskedEmail: "" };
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-icon">🔐</div>
+    <h3>Lupa Password</h3>
+    <p class="modal-subtitle">Masukkan username atau email. Kode OTP akan dikirim ke email yang terdaftar.</p>
+
+    <div class="forgot-step-card">
+      <label class="modal-label">Username / Email</label>
+      <input id="forgotIdentifier" class="portal-input" type="text" placeholder="contoh: candra atau email@gmail.com" autocomplete="username">
+      <button id="forgotOtpButton" class="primary-button" type="button" onclick="requestPasswordResetOtp()">KIRIM OTP</button>
+    </div>
+
+    <div class="secure-note compact-secure-note">
+      <span class="secure-icon">🛡️</span>
+      <span>Password lama tidak pernah ditampilkan. Reset hanya dapat dilakukan dengan OTP email.</span>
+    </div>
+  `);
+
+  setTimeout(() => {
+    const el = document.getElementById("forgotIdentifier");
+    if (el) el.focus();
+  }, 80);
+}
+
+
+async function requestPasswordResetOtp() {
+  const identifier = valueOf("forgotIdentifier");
+
+  if (!identifier) {
+    showToast("Masukkan username atau email.");
+    return;
+  }
+
+  setButtonLoading("forgotOtpButton", true, "Mengirim OTP...");
+
+  try {
+    const res = await apiRequest("requestPasswordReset", { identifier });
+
+    if (!res.success) {
+      showToast(res.message || "OTP belum dapat dikirim.");
+      return;
+    }
+
+    forgotResetState.identifier = identifier;
+    forgotResetState.maskedEmail = res.maskedEmail || "";
+    renderForgotPasswordResetForm();
+    showToast(res.message || "Periksa email untuk kode OTP.");
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    setButtonLoading("forgotOtpButton", false, "KIRIM OTP");
+  }
+}
+
+
+function renderForgotPasswordResetForm() {
+  const target = forgotResetState.maskedEmail
+    ? `OTP dikirim ke ${escapeHtml(forgotResetState.maskedEmail)}`
+    : "Jika akun ditemukan, periksa email yang terdaftar.";
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-icon">✉️</div>
+    <h3>Masukkan OTP</h3>
+    <p class="modal-subtitle">${target}<br>Kode berlaku 10 menit.</p>
+
+    <div class="forgot-step-card">
+      <label class="modal-label">Kode OTP 6 Angka</label>
+      <input id="forgotOtp" class="portal-input otp-input" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]*" placeholder="000000" autocomplete="one-time-code">
+
+      <label class="modal-label">Password Baru</label>
+      <div class="input-wrap modal-password-wrap">
+        <span class="input-icon">🔒</span>
+        <input id="forgotNewPassword" type="password" placeholder="Minimal 6 karakter" autocomplete="new-password">
+        <button type="button" class="eye-button" onclick="togglePasswordField('forgotNewPassword',this)" aria-label="Tampilkan password">👁</button>
+      </div>
+
+      <label class="modal-label top-gap-small">Konfirmasi Password Baru</label>
+      <div class="input-wrap modal-password-wrap">
+        <span class="input-icon">🔐</span>
+        <input id="forgotNewPassword2" type="password" placeholder="Ulangi password" autocomplete="new-password">
+        <button type="button" class="eye-button" onclick="togglePasswordField('forgotNewPassword2',this)" aria-label="Tampilkan konfirmasi password">👁</button>
+      </div>
+
+      <button id="forgotResetButton" class="primary-button" type="button" onclick="submitForgotPasswordReset()">SIMPAN PASSWORD BARU</button>
+      <button class="secondary-button" type="button" onclick="openForgotPassword()">Minta OTP Baru</button>
+    </div>
+  `);
+
+  setTimeout(() => {
+    const el = document.getElementById("forgotOtp");
+    if (el) el.focus();
+  }, 80);
+}
+
+
+async function submitForgotPasswordReset() {
+  const otp = valueOf("forgotOtp");
+  const password = document.getElementById("forgotNewPassword")?.value || "";
+  const password2 = document.getElementById("forgotNewPassword2")?.value || "";
+
+  if (!/^\d{6}$/.test(otp)) {
+    showToast("OTP harus 6 angka.");
+    return;
+  }
+
+  if (password.length < 6) {
+    showToast("Password baru minimal 6 karakter.");
+    return;
+  }
+
+  if (password !== password2) {
+    showToast("Konfirmasi password tidak sama.");
+    return;
+  }
+
+  setButtonLoading("forgotResetButton", true, "Menyimpan...");
+
+  try {
+    const res = await apiRequest("resetPasswordWithOtp", {
+      identifier: forgotResetState.identifier,
+      otp,
+      newPassword: password
+    });
+
+    showToast(res.message || (res.success ? "Password diperbarui." : "Reset password gagal."));
+
+    if (res.success) {
+      const loginUser = document.getElementById("loginUser");
+      if (loginUser) loginUser.value = forgotResetState.identifier;
+      closeModal();
+      setTimeout(() => {
+        const pass = document.getElementById("loginPassword");
+        if (pass) pass.focus();
+      }, 120);
+    }
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    setButtonLoading("forgotResetButton", false, "SIMPAN PASSWORD BARU");
+  }
+}
+
+
+/* =========================================================
+   V1.4.3 - FOTO PROFIL: KOMPRES DI BROWSER
+========================================================= */
+
+async function handleRegisterPhotoChange(event) {
+  const file = event && event.target && event.target.files ? event.target.files[0] : null;
+  if (!file) return;
+
+  try {
+    pendingRegisterPhoto = await compressProfilePhoto(file);
+    updatePhotoPreview("registerPhotoPreviewImg", "registerPhotoInitials", pendingRegisterPhoto.dataUrl);
+    const info = document.getElementById("regPhotoInfo");
+    if (info) info.textContent = `Siap diunggah • ${formatFileSize(pendingRegisterPhoto.bytes)} • WebP 180×180`;
+  } catch (err) {
+    pendingRegisterPhoto = null;
+    if (event.target) event.target.value = "";
+    showToast(err.message || "Foto tidak dapat diproses.");
+  }
+}
+
+
+async function handleProfilePhotoChange(event) {
+  const file = event && event.target && event.target.files ? event.target.files[0] : null;
+  if (!file) return;
+
+  try {
+    pendingProfilePhoto = await compressProfilePhoto(file);
+    updatePhotoPreview("profileModalPhotoImg", "profileModalInitials", pendingProfilePhoto.dataUrl);
+    const info = document.getElementById("profilePhotoInfo");
+    if (info) info.textContent = `Siap disimpan • ${formatFileSize(pendingProfilePhoto.bytes)} • WebP 180×180`;
+    const saveBtn = document.getElementById("saveProfilePhotoButton");
+    if (saveBtn) saveBtn.disabled = false;
+  } catch (err) {
+    pendingProfilePhoto = null;
+    if (event.target) event.target.value = "";
+    showToast(err.message || "Foto tidak dapat diproses.");
+  }
+}
+
+
+function compressProfilePhoto(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type || !file.type.startsWith("image/")) {
+      reject(new Error("Pilih file gambar JPG, PNG, atau WEBP."));
+      return;
+    }
+
+    if (file.size > 12 * 1024 * 1024) {
+      reject(new Error("Foto asli terlalu besar. Maksimal 12 MB sebelum kompres."));
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error("Foto tidak dapat dibaca."));
+    reader.onload = () => {
+      const img = new Image();
+
+      img.onerror = () => reject(new Error("Format foto tidak didukung browser. Gunakan JPG, PNG, atau WEBP."));
+      img.onload = () => {
+        const size = 180;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (!ctx) {
+          reject(new Error("Browser tidak mendukung pemrosesan foto."));
+          return;
+        }
+
+        const sourceSize = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = Math.max(0, (img.naturalWidth - sourceSize) / 2);
+        const sy = Math.max(0, (img.naturalHeight - sourceSize) / 2);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, size, size);
+        ctx.drawImage(img, sx, sy, sourceSize, sourceSize, 0, 0, size, size);
+
+        canvas.toBlob(blob => {
+          if (!blob) {
+            reject(new Error("Gagal mengompres foto."));
+            return;
+          }
+
+          if (blob.size > 180 * 1024) {
+            reject(new Error("Foto hasil kompres masih terlalu besar. Pilih foto lain."));
+            return;
+          }
+
+          const blobReader = new FileReader();
+          blobReader.onerror = () => reject(new Error("Gagal menyiapkan foto."));
+          blobReader.onload = () => {
+            const dataUrl = String(blobReader.result || "");
+            const base64 = dataUrl.split(",")[1] || "";
+
+            resolve({
+              mimeType: blob.type || "image/webp",
+              base64,
+              bytes: blob.size,
+              dataUrl
+            });
+          };
+          blobReader.readAsDataURL(blob);
+        }, "image/webp", 0.72);
+      };
+
+      img.src = String(reader.result || "");
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+
+function updatePhotoPreview(imageId, initialsId, dataUrl) {
+  const img = document.getElementById(imageId);
+  const initials = document.getElementById(initialsId);
+
+  if (img && dataUrl) {
+    img.src = dataUrl;
+    img.classList.remove("hidden");
+  }
+  if (initials) initials.classList.add("hidden");
+}
+
+
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (value < 1024) return value + " B";
+  return Math.max(1, Math.round(value / 1024)) + " KB";
+}
+
+
+function initialsFromName(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "K3";
+  if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+  return (words[0].charAt(0) + words[words.length - 1].charAt(0)).toUpperCase();
+}
+
+
+function setAvatarDisplay(imageId, initialsId, photoUrl, name) {
+  const img = document.getElementById(imageId);
+  const initials = document.getElementById(initialsId);
+
+  if (initials) {
+    initials.textContent = initialsFromName(name);
+    initials.classList.remove("hidden");
+  }
+
+  if (!img) return;
+
+  img.classList.add("hidden");
+  img.removeAttribute("src");
+
+  if (!photoUrl) return;
+
+  img.onload = () => {
+    img.classList.remove("hidden");
+    if (initials) initials.classList.add("hidden");
+  };
+
+  img.onerror = () => {
+    img.classList.add("hidden");
+    if (initials) initials.classList.remove("hidden");
+  };
+
+  img.src = photoUrl;
+}
+
+
+function openMyProfile() {
+  if (!currentUser) return;
+
+  pendingProfilePhoto = null;
+  const roleText = currentUser.jabatan && currentUser.jabatan !== "Anggota"
+    ? currentUser.jabatan
+    : (currentUser.role || "Anggota");
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+
+    <div class="profile-modal-head">
+      <div class="profile-photo-preview profile-photo-large">
+        <img id="profileModalPhotoImg" class="hidden" alt="Foto profil">
+        <span id="profileModalInitials">${escapeHtml(initialsFromName(currentUser.nama))}</span>
+      </div>
+      <div>
+        <small>PROFIL ANGGOTA</small>
+        <h3>${escapeHtml(currentUser.nama || "-")}</h3>
+        <p>${escapeHtml(currentUser.sekolah || "-")}</p>
+        <span>${escapeHtml(roleText)}</span>
+      </div>
+    </div>
+
+    <div class="profile-data-grid">
+      <div><small>Member ID</small><strong>${escapeHtml(currentUser.id || "-")}</strong></div>
+      <div><small>Username</small><strong>${escapeHtml(currentUser.username || "-")}</strong></div>
+      <div><small>Email</small><strong>${escapeHtml(currentUser.email || "-")}</strong></div>
+      <div><small>WhatsApp</small><strong>${escapeHtml(currentUser.wa || "-")}</strong></div>
+    </div>
+
+    <div class="profile-photo-editor">
+      <strong>Foto Profil</strong>
+      <small>Foto otomatis dipotong persegi dan dikompres ke WebP 180×180. Foto lama diganti agar penyimpanan tetap hemat.</small>
+      <label class="photo-select-button full-photo-button" for="profilePhotoInput">Pilih / Ganti Foto</label>
+      <input id="profilePhotoInput" class="photo-file-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="handleProfilePhotoChange(event)">
+      <div id="profilePhotoInfo" class="photo-file-info">Pilih foto baru jika ingin mengganti.</div>
+      <button id="saveProfilePhotoButton" class="primary-button" type="button" onclick="saveProfilePhotoUpdate()" disabled>SIMPAN FOTO</button>
+    </div>
+
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+
+  setAvatarDisplay("profileModalPhotoImg", "profileModalInitials", currentUser.photoUrl || "", currentUser.nama);
+}
+
+
+async function saveProfilePhotoUpdate() {
+  if (!pendingProfilePhoto) {
+    showToast("Pilih foto terlebih dahulu.");
+    return;
+  }
+
+  setButtonLoading("saveProfilePhotoButton", true, "Menyimpan...");
+
+  try {
+    const res = await apiRequest("updateProfilePhoto", {
+      token: sessionToken,
+      profilePhoto: {
+        mimeType: pendingProfilePhoto.mimeType,
+        base64: pendingProfilePhoto.base64
+      }
+    });
+
+    showToast(res.message || (res.success ? "Foto profil diperbarui." : "Foto gagal disimpan."));
+
+    if (!res.success) return;
+
+    currentUser.photoUrl = res.photoUrl || "";
+    localStorage.setItem("kom3_user", JSON.stringify(currentUser));
+    clearApiReadCache();
+    updateProfileDisplay(currentUser);
+    pendingProfilePhoto = null;
+    setTimeout(openMyProfile, 250);
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    setButtonLoading("saveProfilePhotoButton", false, "SIMPAN FOTO");
+  }
 }
 
 
@@ -442,13 +874,24 @@ async function handleRegister(event) {
       email,
       wa,
       username,
-      password
+      password,
+      profilePhoto: pendingRegisterPhoto ? {
+        mimeType: pendingRegisterPhoto.mimeType,
+        base64: pendingRegisterPhoto.base64
+      } : null
     });
 
     showToast(res.message || "Pendaftaran selesai.");
 
     if (res.success) {
       document.getElementById("registerForm").reset();
+      pendingRegisterPhoto = null;
+      const previewImg = document.getElementById("registerPhotoPreviewImg");
+      const previewInitials = document.getElementById("registerPhotoInitials");
+      const info = document.getElementById("regPhotoInfo");
+      if (previewImg) { previewImg.classList.add("hidden"); previewImg.removeAttribute("src"); }
+      if (previewInitials) previewInitials.classList.remove("hidden");
+      if (info) info.textContent = "Belum ada foto dipilih.";
       setTimeout(showLogin, 1000);
     }
   } catch (err) {
@@ -493,6 +936,7 @@ async function loadDashboard() {
 
 function updateProfileDisplay(user) {
   setText("dashboardName", user.nama);
+  setAvatarDisplay("dashboardAvatarImg", "dashboardAvatarInitials", user.photoUrl || "", user.nama);
 
   const schoolText =
     user.role === "Pengurus" && user.jabatan && user.jabatan !== "Pengurus"
@@ -3790,12 +4234,7 @@ function setNav(element, name) {
   if (name === "Home") return;
 
   if (name === "Profil") {
-    showToast(
-      currentUser.nama +
-        " • " +
-        currentUser.role +
-        (currentUser.jabatan ? " • " + currentUser.jabatan : "")
-    );
+    openMyProfile();
     return;
   }
 
