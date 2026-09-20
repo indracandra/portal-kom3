@@ -7,7 +7,7 @@
 
   <title>Portal KOM 3</title>
 
-  <link rel="stylesheet" href="style.css?v=1.4.3.2">
+  <link rel="stylesheet" href="style.css?v=1.4.3.3">
 </head>
 <body>
 
@@ -142,11 +142,11 @@
                 <span id="registerPhotoInitials">👤</span>
               </div>
               <div class="register-photo-copy">
-                <strong>Foto Profil <span class="optional">Opsional</span></strong>
+                <strong>Foto Profil <span class="required-photo-label">Wajib</span></strong>
                 <small>Otomatis dipotong persegi dan dikompres ke WebP agar hemat penyimpanan.</small>
                 <label class="photo-select-button" for="regPhoto">Pilih Foto</label>
-                <input id="regPhoto" class="photo-file-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="handleRegisterPhotoChange(event)">
-                <div id="regPhotoInfo" class="photo-file-info">Belum ada foto dipilih.</div>
+                <input id="regPhoto" class="photo-file-input" type="file" accept="image/jpeg,image/png,image/webp" onchange="handleRegisterPhotoChange(event)" required aria-required="true">
+                <div id="regPhotoInfo" class="photo-file-info">Foto profil wajib diisi.</div>
               </div>
             </div>
 
@@ -218,7 +218,7 @@
               </div>
             </div>
 
-            <button id="registerSubmitButton" type="submit" class="primary-button">
+            <button id="registerSubmitButton" type="submit" class="primary-button" disabled>
               DAFTAR SEKARANG
             </button>
 
@@ -521,6 +521,6 @@
 
   </div>
 
-  <script src="app.js?v=1.4.3.2"></script>
+  <script src="app.js?v=1.4.3.3"></script>
 </body>
 </html>
