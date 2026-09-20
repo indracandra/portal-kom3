@@ -2709,3 +2709,312 @@ button:disabled {
 .compact-info-panel{font-size:12px;line-height:1.55}.mini-loader{display:inline-block;width:14px;height:14px;border:2px solid #d8e2ea;border-top-color:#0b5d8f;border-radius:50%;vertical-align:-2px;margin-right:6px;animation:kom3Spin .8s linear infinite}@keyframes kom3Spin{to{transform:rotate(360deg)}}
 .qr-scanner-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:-2px 0 12px;padding:9px 10px;border:1px solid #e1e8ee;border-radius:14px;background:#f8fbfd}.qr-scanner-toolbar>span{font-size:10px;line-height:1.35;color:#7a8995;text-align:right}.scan-sound-toggle{border:1px solid #d8e2ea;background:#fff;color:#284359;border-radius:999px;padding:8px 11px;font-size:10px;font-weight:800;white-space:nowrap;cursor:pointer}.scan-sound-toggle.is-on{border-color:#d7ba50;background:#fff8dc;color:#745b00}.qr-scanner-status b,.qr-scanner-status small{display:block}.qr-scanner-status small{margin-top:3px;opacity:.85}.qr-scanner-status.scan-success{background:rgba(7,91,70,.92)}.qr-scanner-status.scan-warning{background:rgba(126,92,10,.92)}.qr-scanner-status.scan-error{background:rgba(126,38,38,.92)}
 @media(max-width:480px){.qr-scanner-toolbar{align-items:flex-start}.qr-scanner-toolbar>span{font-size:9px;max-width:150px}}
+
+
+/* =========================================================
+   V1.4.3 - ACCOUNT EXPERIENCE UPGRADE
+========================================================= */
+
+/* Foto profil pendaftaran */
+.register-photo-block{
+  display:grid;
+  grid-template-columns:82px minmax(0,1fr);
+  gap:14px;
+  align-items:center;
+  margin:2px 0 18px;
+  padding:14px;
+  background:#f6f9fc;
+  border:1px solid #e2eaf1;
+  border-radius:20px;
+  text-align:left;
+}
+.profile-photo-preview{
+  position:relative;
+  width:82px;
+  height:82px;
+  border-radius:50%;
+  overflow:hidden;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(145deg,#0a3c61,#0d6b91);
+  color:#fff;
+  border:3px solid #fff;
+  box-shadow:0 8px 20px rgba(9,54,84,.16);
+  flex:0 0 auto;
+}
+.profile-photo-preview img{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+.profile-photo-preview span{
+  font-size:24px;
+  font-weight:900;
+  letter-spacing:.03em;
+}
+.register-photo-copy strong,
+.register-photo-copy small{
+  display:block;
+}
+.register-photo-copy strong{
+  color:#173148;
+  font-size:13px;
+}
+.register-photo-copy small{
+  margin:4px 0 9px;
+  color:#788895;
+  font-size:10px;
+  line-height:1.45;
+}
+.photo-file-input{
+  position:absolute!important;
+  width:1px!important;
+  height:1px!important;
+  overflow:hidden!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
+.photo-select-button{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:36px;
+  padding:0 12px;
+  border:1px solid #bfcfdb;
+  border-radius:11px;
+  background:#fff;
+  color:#14547b;
+  font-size:10px;
+  font-weight:800;
+  cursor:pointer;
+}
+.photo-file-info{
+  margin-top:7px;
+  color:#8696a3;
+  font-size:9px;
+  line-height:1.4;
+}
+
+/* Avatar dashboard */
+.welcome-person{
+  display:flex;
+  align-items:center;
+  gap:11px;
+  min-width:0;
+}
+.welcome-copy{
+  min-width:0;
+}
+.dashboard-avatar{
+  position:relative;
+  width:54px;
+  height:54px;
+  flex:0 0 54px;
+  border:2px solid rgba(255,216,103,.72);
+  border-radius:50%;
+  overflow:hidden;
+  display:grid;
+  place-items:center;
+  padding:0;
+  background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.08));
+  color:#fff;
+  font-size:15px;
+  font-weight:900;
+  box-shadow:0 7px 18px rgba(0,0,0,.18);
+}
+.dashboard-avatar img{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+.dashboard-avatar span{
+  display:grid;
+  place-items:center;
+  width:100%;
+  height:100%;
+}
+.welcome-card{
+  align-items:center;
+}
+
+/* Forgot password */
+.forgot-step-card{
+  margin:16px 0 4px;
+  padding:14px;
+  background:#f7fafc;
+  border:1px solid #e1e8ef;
+  border-radius:18px;
+  text-align:left;
+}
+.forgot-step-card .primary-button,
+.forgot-step-card .secondary-button{
+  margin-top:12px;
+}
+.compact-secure-note{
+  margin-top:12px;
+  text-align:left;
+}
+.modal-password-wrap input{
+  height:50px;
+  padding:0 44px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  background:#fff;
+  outline:none;
+  width:100%;
+}
+.modal-password-wrap input:focus{
+  border-color:var(--blue-600);
+  box-shadow:0 0 0 4px rgba(28,101,162,.10);
+}
+.top-gap-small{
+  margin-top:12px!important;
+}
+.otp-input{
+  text-align:center;
+  font-size:24px;
+  font-weight:900;
+  letter-spacing:.28em;
+  padding-left:22px!important;
+}
+
+/* Modal profil */
+.profile-modal-head{
+  display:flex;
+  gap:14px;
+  align-items:center;
+  text-align:left;
+  margin:4px 0 16px;
+  padding:14px;
+  border-radius:20px;
+  background:linear-gradient(145deg,#082f4d,#0d5f86);
+  color:#fff;
+}
+.profile-photo-large{
+  width:78px;
+  height:78px;
+  flex-basis:78px;
+  border-color:#f2d16a;
+}
+.profile-modal-head>div:last-child{
+  min-width:0;
+}
+.profile-modal-head small{
+  display:block;
+  color:#f4d66e;
+  font-size:8px;
+  font-weight:800;
+  letter-spacing:.14em;
+}
+.profile-modal-head h3{
+  margin:4px 0 3px;
+  color:#fff;
+  font-size:18px;
+  line-height:1.2;
+}
+.profile-modal-head p{
+  margin:0;
+  color:rgba(255,255,255,.72);
+  font-size:10px;
+}
+.profile-modal-head>div:last-child>span{
+  display:inline-block;
+  margin-top:7px;
+  padding:5px 9px;
+  border:1px solid rgba(246,211,96,.4);
+  border-radius:999px;
+  background:rgba(246,211,96,.12);
+  color:#f5d66c;
+  font-size:9px;
+  font-weight:800;
+}
+.profile-data-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  text-align:left;
+  margin-bottom:14px;
+}
+.profile-data-grid>div{
+  min-width:0;
+  padding:10px;
+  border:1px solid #e2e9ef;
+  border-radius:14px;
+  background:#fff;
+}
+.profile-data-grid small,
+.profile-data-grid strong{
+  display:block;
+}
+.profile-data-grid small{
+  color:#83929e;
+  font-size:8px;
+  margin-bottom:4px;
+}
+.profile-data-grid strong{
+  color:#173148;
+  font-size:10px;
+  word-break:break-word;
+}
+.profile-photo-editor{
+  padding:13px;
+  border:1px solid #e2e9ef;
+  border-radius:17px;
+  background:#f7fafc;
+  text-align:left;
+}
+.profile-photo-editor>strong,
+.profile-photo-editor>small{
+  display:block;
+}
+.profile-photo-editor>strong{
+  color:#173148;
+  font-size:12px;
+}
+.profile-photo-editor>small{
+  color:#7c8c98;
+  font-size:9px;
+  line-height:1.5;
+  margin:4px 0 10px;
+}
+.full-photo-button{
+  width:100%;
+}
+.profile-photo-editor .primary-button{
+  margin-top:10px;
+}
+.profile-photo-editor .primary-button:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
+
+@media(max-width:390px){
+  .register-photo-block{
+    grid-template-columns:68px minmax(0,1fr);
+    gap:10px;
+    padding:12px;
+  }
+  .register-photo-block .profile-photo-preview{
+    width:68px;
+    height:68px;
+  }
+  .dashboard-avatar{
+    width:48px;
+    height:48px;
+    flex-basis:48px;
+  }
+  .welcome-card h2{
+    font-size:19px;
+  }
+  .role-chip{
+    padding:6px 8px;
+    font-size:8px;
+  }
+  .profile-data-grid{
+    grid-template-columns:1fr;
+  }
+}
