@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.2.4
+   PORTAL KOM 3 - FRONTEND V1.2.5
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -31,6 +31,12 @@
    - Search, filter, tab, dan Muat lainnya
    - Jadwal salat ringkas di dashboard
    - Fondasi QRIS Kas dari pengaturan Portal
+
+   TAMBAHAN V1.2.5:
+   - Konfirmasi pembayaran kas QRIS
+   - Riwayat kas anggota compact
+   - Verifikasi khusus Admin/Bendahara
+   - Status pembayaran tampil pada dashboard
 ========================================================= */
 
 const APP_CONFIG = {
@@ -68,6 +74,8 @@ const compactUI = {
   leave: { agendas: [], history: [], filter: "ALL", visible: 5 },
   leaveReview: { items: [], tab: "PENDING", query: "", visible: 5 },
   publicAnnouncements: { items: [], visible: 5 },
+  kas: { payments: [], periods: [], currentPeriod: "", currentStatus: "BELUM_BAYAR", visible: 5 },
+  kasReview: { items: [], tab: "MENUNGGU", query: "", visible: 5 },
   portalSettings: null
 };
 
@@ -420,6 +428,13 @@ async function openAdminCenter() {
           <span><b>Pengumuman</b><small>Informasi resmi Portal KOM 3</small></span>
           <span>›</span>
         </button>
+
+        ${(currentUser.role === "Admin" || String(currentUser.jabatan || "").toLowerCase() === "bendahara") ? `
+        <button type="button" class="admin-action" onclick="openKasVerification()">
+          <span class="admin-action-icon">💳</span>
+          <span><b>Verifikasi Kas</b><small>${escapeHtml(String(s.pendingKas || 0))} pembayaran menunggu verifikasi</small></span>
+          <span>›</span>
+        </button>` : ""}
 
         <button type="button" class="admin-action" onclick="openMeetingArchive()">
           <span class="admin-action-icon">🗂️</span>
@@ -2168,30 +2183,380 @@ async function openPrayerTimes() {
 
 
 /* -------------------------
-   KAS / QRIS FOUNDATION
+   V1.2.5 - KAS & VERIFIKASI QRIS
 ------------------------- */
 
 async function openKasSaya() {
   showLoadingModal("Kas Saya");
   try {
-    const res = await apiRequest("portalSettings", { token: sessionToken });
+    const res = await apiRequest("kasMySummary", { token: sessionToken });
     if (!res.success) { showToast(res.message); closeModal(); return; }
+
+    compactUI.kas.payments = res.payments || [];
+    compactUI.kas.periods = res.periods || [];
+    compactUI.kas.currentPeriod = res.currentPeriod || "";
+    compactUI.kas.currentStatus = res.currentStatus || "BELUM_BAYAR";
+    compactUI.kas.visible = COMPACT_PAGE_SIZE;
     compactUI.portalSettings = res.settings || {};
-    const s = compactUI.portalSettings;
-    const qrisActive = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
-    setModalHtml(`
-      <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <div class="modal-title-row"><div class="modal-icon compact">💰</div><div><h3>Kas Saya</h3><p class="modal-subtitle">Fondasi pembayaran kas Portal KOM 3</p></div></div>
-      <div class="kas-summary-card"><small>Kas Bulanan</small><strong>${formatRupiah(s.kasMonthly || 5000)}</strong><span>Status pembayaran otomatis akan aktif pada modul Keuangan.</span></div>
-      ${qrisActive ? `<div class="qris-box"><div class="qris-title">Bayar dengan QRIS</div><img src="${escapeHtml(s.qrisImageUrl)}" alt="QRIS Kas KOM 3" class="qris-image"><strong>${escapeHtml(s.qrisName || "MGMP Komisariat 3")}</strong><small>Scan melalui aplikasi bank/e-wallet. Pastikan nama penerima sesuai sebelum membayar.</small><button type="button" class="outline-button" onclick="openQrisImage('${escapeJs(s.qrisImageUrl)}')">🔍 Perbesar QRIS</button></div>` : `<div class="empty-panel">QRIS belum diaktifkan oleh Admin. Fitur Kas tetap aman dan tidak mengubah data pembayaran lama.</div>`}
-      <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
-    `);
-  } catch (err) { showToast(err.message); closeModal(); }
+    renderKasSayaModal();
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
+}
+
+
+function renderKasSayaModal() {
+  const s = compactUI.portalSettings || {};
+  const qrisActive = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
+  const latestByPeriod = latestKasPaymentsByPeriod(compactUI.kas.payments || []);
+  const history = Object.values(latestByPeriod).sort((a, b) => String(b.periode).localeCompare(String(a.periode)));
+  const shown = history.slice(0, compactUI.kas.visible);
+  const current = latestByPeriod[compactUI.kas.currentPeriod] || null;
+  const status = current ? String(current.status || "").toUpperCase() : "BELUM_BAYAR";
+  const hasAvailablePeriod = (compactUI.kas.periods || []).some(p => {
+    const item = latestByPeriod[p.value];
+    return !item || String(item.status || "").toUpperCase() === "DITOLAK";
+  });
+
+  const qrisBox = qrisActive ? `
+    <div class="qris-box compact-qris-box">
+      <div class="qris-title">Bayar dengan QRIS</div>
+      <img src="${escapeHtml(s.qrisImageUrl)}" alt="QRIS Kas KOM 3" class="qris-image compact-qris-image">
+      <strong>${escapeHtml(s.qrisName || "MGMP Komisariat 3")}</strong>
+      <small>Scan dengan aplikasi bank/e-wallet. Pastikan nama penerima sesuai sebelum membayar.</small>
+      <div class="qris-action-row">
+        <button type="button" class="outline-button" onclick="openQrisImage('${escapeJs(s.qrisImageUrl)}')">🔍 Perbesar</button>
+        ${hasAvailablePeriod ? `<button type="button" class="primary-button" onclick="openKasConfirmation()">✓ Saya Sudah Membayar</button>` : ""}
+      </div>
+    </div>` : `<div class="empty-panel">QRIS belum diaktifkan oleh Admin. Hubungi Bendahara untuk informasi pembayaran.</div>`;
+
+  const historyHtml = shown.length
+    ? shown.map(kasHistoryCardHtml).join("")
+    : `<div class="empty-panel">Belum ada riwayat konfirmasi pembayaran.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-title-row">
+      <div class="modal-icon compact">💰</div>
+      <div><h3>Kas Saya</h3><p class="modal-subtitle">Pembayaran kas & verifikasi Bendahara</p></div>
+    </div>
+    <div class="kas-summary-card"><small>Kas Bulanan</small><strong>${formatRupiah(s.kasMonthly || 5000)}</strong><span>Tahun Ajaran ${escapeHtml(s.tahunAjaran || "-")}</span></div>
+    ${kasCurrentStatusHtml(status, current)}
+    ${qrisBox}
+    <div class="section-mini-title top-gap">Riwayat Kas Saya</div>
+    <div class="compact-list">${historyHtml}</div>
+    ${renderLoadMoreButton(history.length > compactUI.kas.visible, "loadMoreKasHistory", "Muat 5 lainnya")}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+
+function kasCurrentStatusHtml(status, item) {
+  const normalized = String(status || "BELUM_BAYAR").toUpperCase();
+  const meta = {
+    BELUM_BAYAR: ["Belum Bayar", "Belum ada konfirmasi untuk bulan berjalan.", "kas-status-unpaid", "○"],
+    MENUNGGU: ["Menunggu Verifikasi", "Konfirmasi sudah terkirim. Bendahara akan mencocokkan transaksi QRIS.", "kas-status-pending", "⏳"],
+    LUNAS: ["Lunas", "Pembayaran bulan berjalan sudah diverifikasi.", "kas-status-paid", "✓"],
+    DITOLAK: ["Perlu Diperbaiki", item && item.catatanVerifikasi ? item.catatanVerifikasi : "Konfirmasi ditolak. Silakan cek transaksi lalu kirim ulang.", "kas-status-rejected", "!"]
+  }[normalized] || [normalized, "", "kas-status-unpaid", "○"];
+
+  return `<div class="kas-current-status ${meta[2]}">
+    <span>${meta[3]}</span>
+    <div>
+      <small>${escapeHtml(kasPeriodLabelClient(compactUI.kas.currentPeriod))}</small>
+      <strong>${escapeHtml(meta[0])}</strong>
+      <p>${escapeHtml(meta[1])}</p>
+    </div>
+  </div>`;
+}
+
+
+function kasHistoryCardHtml(item) {
+  const status = String(item.status || "MENUNGGU").toUpperCase();
+  return `<button type="button" class="kas-history-card" onclick="openKasHistoryDetail('${escapeJs(item.id)}')">
+    <span class="kas-history-icon">${status === "LUNAS" ? "✓" : status === "MENUNGGU" ? "⏳" : "!"}</span>
+    <span class="kas-history-main"><strong>${escapeHtml(item.periodeLabel || kasPeriodLabelClient(item.periode))}</strong><small>${escapeHtml(formatRupiah(item.nominal || 0))} • ${escapeHtml(item.tanggalBayar || "-")}</small></span>
+    <span class="status-pill ${kasStatusClass(status)}">${escapeHtml(kasStatusLabel(status))}</span>
+  </button>`;
+}
+
+
+function loadMoreKasHistory() {
+  compactUI.kas.visible += COMPACT_PAGE_SIZE;
+  renderKasSayaModal();
+}
+
+
+function latestKasPaymentsByPeriod(items) {
+  const map = {};
+  (items || []).forEach(item => {
+    if (!map[item.periode]) map[item.periode] = item;
+  });
+  return map;
+}
+
+
+function openKasConfirmation() {
+  const s = compactUI.portalSettings || {};
+  const periods = compactUI.kas.periods || [];
+  const latest = latestKasPaymentsByPeriod(compactUI.kas.payments || []);
+  const available = periods.filter(p => !latest[p.value] || String(latest[p.value].status || "").toUpperCase() === "DITOLAK");
+  const selected = available.some(p => p.value === compactUI.kas.currentPeriod)
+    ? compactUI.kas.currentPeriod
+    : (available[0] ? available[0].value : "");
+
+  if (!available.length) {
+    showToast("Semua periode pada tahun ajaran ini sudah memiliki konfirmasi aktif/LUNAS.");
+    return;
+  }
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="openKasSaya()">×</button>
+    <div class="modal-title-row"><div class="modal-icon compact">🧾</div><div><h3>Konfirmasi Pembayaran</h3><p class="modal-subtitle">Isi setelah transaksi QRIS berhasil.</p></div></div>
+    <div class="payment-safety-note">Portal tidak menyimpan screenshot transaksi. Bendahara mencocokkan data ini dengan riwayat QRIS.</div>
+    <form id="kasConfirmForm" class="manager-form compact-form" onsubmit="submitKasConfirmation(event)">
+      <label class="modal-label">Bulan Kas</label>
+      <select id="kasConfirmPeriod" class="portal-select full" required>${available.map(p => `<option value="${escapeHtml(p.value)}" ${p.value === selected ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("")}</select>
+      <div class="compact-detail-grid">
+        <div><label class="modal-label">Nominal</label><input class="portal-input" type="text" value="${escapeHtml(formatRupiah(s.kasMonthly || 5000))}" readonly></div>
+        <div><label class="modal-label">Metode</label><input class="portal-input" type="text" value="QRIS" readonly></div>
+      </div>
+      <div class="compact-detail-grid">
+        <div><label class="modal-label">Tanggal Bayar</label><input id="kasConfirmDate" class="portal-input" type="date" value="${escapeHtml(localDateInputValue())}" required></div>
+        <div><label class="modal-label">Jam Bayar</label><input id="kasConfirmTime" class="portal-input" type="time" value="${escapeHtml(localTimeInputValue())}" required></div>
+      </div>
+      <label class="modal-label">Nomor Referensi <span class="optional-label">opsional</span></label>
+      <input id="kasConfirmReference" class="portal-input" type="text" maxlength="100" placeholder="Nomor referensi dari bukti QRIS">
+      <label class="modal-label">Link Bukti <span class="optional-label">opsional</span></label>
+      <input id="kasConfirmProof" class="portal-input" type="url" placeholder="https://...">
+      <div class="file-note">Jika diperlukan, simpan screenshot di akun pribadi lalu tempel link berbagi. File tidak masuk penyimpanan Portal.</div>
+      <label class="modal-label">Catatan <span class="optional-label">opsional</span></label>
+      <textarea id="kasConfirmNote" class="portal-textarea" rows="2" maxlength="500" placeholder="Misalnya nama akun pengirim"></textarea>
+      <button id="kasConfirmSubmitButton" class="primary-button" type="submit">KIRIM KONFIRMASI</button>
+    </form>
+    <button class="secondary-button" type="button" onclick="openKasSaya()">← Kembali</button>
+  `);
+}
+
+
+async function submitKasConfirmation(event) {
+  event.preventDefault();
+  setButtonLoading("kasConfirmSubmitButton", true, "Mengirim...");
+
+  try {
+    const res = await apiRequest("submitKasPayment", {
+      token: sessionToken,
+      periode: valueOf("kasConfirmPeriod"),
+      tanggalBayar: valueOf("kasConfirmDate"),
+      jamBayar: valueOf("kasConfirmTime"),
+      referensi: valueOf("kasConfirmReference"),
+      buktiUrl: valueOf("kasConfirmProof"),
+      catatan: valueOf("kasConfirmNote")
+    });
+
+    showToast(res.message);
+    if (res.success) {
+      await loadDashboard();
+      await openKasSaya();
+    }
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    setButtonLoading("kasConfirmSubmitButton", false, "KIRIM KONFIRMASI");
+  }
+}
+
+
+function openKasHistoryDetail(id) {
+  const item = (compactUI.kas.payments || []).find(x => x.id === id);
+  if (!item) return;
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="openKasSaya()">×</button>
+    <h3>Detail Pembayaran Kas</h3><p class="modal-subtitle">${escapeHtml(item.periodeLabel || "-")}</p>
+    <div class="payment-detail-list">
+      ${paymentDetailRow("Status", kasStatusLabel(item.status))}
+      ${paymentDetailRow("Nominal", formatRupiah(item.nominal || 0))}
+      ${paymentDetailRow("Tanggal", (item.tanggalBayar || "-") + (item.jamBayar ? " • " + item.jamBayar : ""))}
+      ${paymentDetailRow("Metode", item.metode || "QRIS")}
+      ${paymentDetailRow("Referensi", item.referensi || "-")}
+      ${paymentDetailRow("Dikirim", item.tanggalKirim || "-")}
+      ${item.diverifikasiOleh ? paymentDetailRow("Diverifikasi", item.diverifikasiOleh + (item.tanggalVerifikasi ? " • " + item.tanggalVerifikasi : "")) : ""}
+      ${item.catatanVerifikasi ? paymentDetailRow("Catatan Bendahara", item.catatanVerifikasi) : ""}
+    </div>
+    ${item.buktiUrl ? `<button class="outline-button" type="button" onclick="openExternalLink('${escapeJs(item.buktiUrl)}')">🔗 Buka Bukti</button>` : ""}
+    ${String(item.status).toUpperCase() === "DITOLAK" ? `<button class="primary-button" type="button" onclick="openKasConfirmation()">KIRIM ULANG KONFIRMASI</button>` : ""}
+    <button class="secondary-button" type="button" onclick="openKasSaya()">← Kembali</button>
+  `);
+}
+
+
+async function openKasVerification() {
+  if (!currentUser || !(currentUser.role === "Admin" || String(currentUser.jabatan || "").toLowerCase() === "bendahara")) {
+    showToast("Verifikasi Kas hanya untuk Admin atau Bendahara.");
+    return;
+  }
+
+  showLoadingModal("Verifikasi Kas");
+  try {
+    const res = await apiRequest("listKasPaymentsManager", { token: sessionToken });
+    if (!res.success) { showToast(res.message); closeModal(); return; }
+
+    compactUI.kasReview.items = res.payments || [];
+    compactUI.kasReview.tab = "MENUNGGU";
+    compactUI.kasReview.query = "";
+    compactUI.kasReview.visible = COMPACT_PAGE_SIZE;
+    renderKasVerificationModal();
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
+}
+
+
+function renderKasVerificationModal() {
+  const all = compactUI.kasReview.items || [];
+  const tab = compactUI.kasReview.tab;
+  const q = String(compactUI.kasReview.query || "").toLowerCase().trim();
+
+  const counts = {
+    MENUNGGU: all.filter(x => String(x.status).toUpperCase() === "MENUNGGU").length,
+    LUNAS: all.filter(x => String(x.status).toUpperCase() === "LUNAS").length,
+    DITOLAK: all.filter(x => String(x.status).toUpperCase() === "DITOLAK").length
+  };
+
+  const filtered = all.filter(item => {
+    if (String(item.status).toUpperCase() !== tab) return false;
+    if (!q) return true;
+    return [item.nama, item.sekolah, item.periodeLabel, item.referensi].join(" ").toLowerCase().includes(q);
+  });
+  const shown = filtered.slice(0, compactUI.kasReview.visible);
+
+  setModalHtml(`
+    <div class="modal-handle"></div>
+    <button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-title-row"><div class="modal-icon compact">💳</div><div><h3>Verifikasi Kas</h3><p class="modal-subtitle">Khusus Admin/Bendahara • fokus pada yang perlu tindakan</p></div></div>
+    <div class="compact-tabs three-tabs">
+      ${compactTabButton("Menunggu", "MENUNGGU", tab, counts.MENUNGGU, "setKasReviewTab")}
+      ${compactTabButton("Lunas", "LUNAS", tab, counts.LUNAS, "setKasReviewTab")}
+      ${compactTabButton("Ditolak", "DITOLAK", tab, counts.DITOLAK, "setKasReviewTab")}
+    </div>
+    ${compactSearchHtml(compactUI.kasReview.query, "filterKasReview", "Cari nama, sekolah, bulan...")}
+    <div class="compact-list">${shown.length ? shown.map(kasReviewCardHtml).join("") : `<div class="empty-panel">Tidak ada data pada kategori ini.</div>`}</div>
+    ${renderLoadMoreButton(filtered.length > compactUI.kasReview.visible, "loadMoreKasReview")}
+    <button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>
+  `);
+}
+
+
+function kasReviewCardHtml(item) {
+  const pending = String(item.status).toUpperCase() === "MENUNGGU";
+
+  return `<div class="management-card kas-review-card">
+    <div class="management-card-head">
+      <div><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.sekolah || "-")}</small><small>${escapeHtml(item.periodeLabel || "-")} • ${escapeHtml(formatRupiah(item.nominal || 0))}</small></div>
+      <span class="status-pill ${kasStatusClass(item.status)}">${escapeHtml(kasStatusLabel(item.status))}</span>
+    </div>
+    <div class="kas-review-meta"><span>🗓 ${escapeHtml(item.tanggalBayar || "-")} ${escapeHtml(item.jamBayar || "")}</span><span>🔖 ${escapeHtml(item.referensi || "Tanpa referensi")}</span></div>
+    ${item.catatanAnggota ? `<p class="compact-clamp-2">${escapeHtml(item.catatanAnggota)}</p>` : ""}
+    ${item.buktiUrl ? `<button class="proof-link proof-button" type="button" onclick="openExternalLink('${escapeJs(item.buktiUrl)}')">🔗 Buka Bukti</button>` : ""}
+    ${pending ? `<textarea id="kas-review-note-${escapeHtml(item.id)}" class="portal-textarea" rows="2" maxlength="500" placeholder="Catatan verifikasi (opsional)"></textarea><div class="review-buttons"><button type="button" class="approve-button" onclick="reviewKasPayment('${escapeJs(item.id)}','APPROVE')">✓ Verifikasi Lunas</button><button type="button" class="reject-button" onclick="reviewKasPayment('${escapeJs(item.id)}','REJECT')">✕ Tolak</button></div>` : item.catatanVerifikasi ? `<small class="review-note-readonly">Catatan: ${escapeHtml(item.catatanVerifikasi)}</small>` : ""}
+  </div>`;
+}
+
+
+function setKasReviewTab(tab) {
+  compactUI.kasReview.tab = tab;
+  compactUI.kasReview.visible = COMPACT_PAGE_SIZE;
+  renderKasVerificationModal();
+}
+
+function filterKasReview(q) {
+  compactUI.kasReview.query = q || "";
+  compactUI.kasReview.visible = COMPACT_PAGE_SIZE;
+  renderKasVerificationModal();
+  refocusCompactSearch();
+}
+
+function loadMoreKasReview() {
+  compactUI.kasReview.visible += COMPACT_PAGE_SIZE;
+  renderKasVerificationModal();
+}
+
+
+async function reviewKasPayment(id, decision) {
+  const noteEl = document.getElementById(`kas-review-note-${id}`);
+  const note = noteEl ? noteEl.value.trim() : "";
+  const message = decision === "APPROVE"
+    ? "Verifikasi pembayaran ini sebagai LUNAS?"
+    : "Tolak konfirmasi pembayaran ini?";
+
+  if (!confirm(message)) return;
+
+  try {
+    const res = await apiRequest("reviewKasPayment", {
+      token: sessionToken,
+      paymentId: id,
+      decision,
+      note
+    });
+
+    showToast(res.message);
+    if (res.success) {
+      await loadDashboard();
+      await openKasVerification();
+    }
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+
+function kasStatusLabel(status) {
+  const s = String(status || "").toUpperCase();
+  if (s === "LUNAS") return "LUNAS";
+  if (s === "MENUNGGU") return "MENUNGGU";
+  if (s === "DITOLAK") return "DITOLAK";
+  return "BELUM BAYAR";
+}
+
+function kasStatusClass(status) {
+  const s = String(status || "").toUpperCase();
+  if (s === "LUNAS") return "status-active";
+  if (s === "MENUNGGU") return "status-pending";
+  if (s === "DITOLAK") return "status-rejected";
+  return "status-neutral";
+}
+
+function kasPeriodLabelClient(period) {
+  const match = String(period || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return period || "Bulan berjalan";
+  const names = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+  return `${names[Number(match[2]) - 1] || match[2]} ${match[1]}`;
+}
+
+function localDateInputValue() {
+  const d = new Date();
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function localTimeInputValue() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function paymentDetailRow(label, value) {
+  return `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(String(value || "-"))}</strong></div>`;
 }
 
 function formatRupiah(value) {
   const num = Number(value || 0);
-  return new Intl.NumberFormat("id-ID", { style:"currency", currency:"IDR", maximumFractionDigits:0 }).format(num);
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(num);
 }
 
 function isSafePortalImageUrl(url) {
@@ -2200,7 +2565,10 @@ function isSafePortalImageUrl(url) {
 }
 
 function openQrisImage(url) {
-  if (!isSafePortalImageUrl(url)) { showToast("Link QRIS tidak valid."); return; }
+  if (!isSafePortalImageUrl(url)) {
+    showToast("Link QRIS tidak valid.");
+    return;
+  }
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
@@ -2219,7 +2587,7 @@ async function openPortalSettings() {
     compactUI.portalSettings = s;
     setModalHtml(`
       <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <h3>Pengaturan Portal</h3><p class="modal-subtitle">Pengaturan tambahan V1.2.4. Tidak mengubah data fitur lama.</p>
+      <h3>Pengaturan Portal</h3><p class="modal-subtitle">Pengaturan Portal. V1.2.5 menambahkan verifikasi kas tanpa mengubah fitur lama.</p>
       <form id="portalSettingsForm" class="manager-form compact-form" onsubmit="savePortalSettingsFromModal(event)">
         <div class="section-mini-title">Jadwal Salat</div>
         <label class="modal-label">Status</label><select id="settingPrayerStatus" class="portal-select full"><option value="AKTIF" ${String(s.prayerStatus).toUpperCase() === "AKTIF" ? "selected" : ""}>Aktif</option><option value="NONAKTIF" ${String(s.prayerStatus).toUpperCase() === "NONAKTIF" ? "selected" : ""}>Nonaktif</option></select>
