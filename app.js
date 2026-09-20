@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.4
+   PORTAL KOM 3 - FRONTEND V1.4.1
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -47,8 +47,13 @@
    TAMBAHAN V1.4:
    - Kartu Anggota Digital
    - QR token unik per anggota
-   - Scanner QR kehadiran khusus Admin/Pengurus
+   - Scanner QR kehadiran
    - Absensi manual tetap dipertahankan
+
+   TAMBAHAN V1.4.1:
+   - Laporan keuangan umum read-only untuk anggota
+   - Kartu digital premium menampilkan jabatan organisasi
+   - Scanner QR: Admin, Ketua, Sekretaris, Bendahara
 ========================================================= */
 
 const APP_CONFIG = {
@@ -95,6 +100,7 @@ const compactUI = {
     memberStatus: "BELUM_BAYAR", memberQuery: "", memberVisible: 5,
     reportVisible: 5
   },
+  financePublic: { summary: null, monthly: [], years: [], tahunAjaran: "", page: 1 },
   qr: { card: null, stream: null, detector: null, scanning: false, lastPayload: "" },
   portalSettings: null
 };
@@ -2015,7 +2021,7 @@ function renderAttendanceManagerModal() {
     <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
     <h3>Absensi Pertemuan</h3><p class="modal-subtitle"><b>${escapeHtml(agenda.nama || "Agenda Aktif")}</b><br>${escapeHtml(agenda.tanggal || "")} • ${escapeHtml(agenda.jam || "")}</p>
     <div class="compact-counter-strip"><span>Belum <b>${counts.BELUM}</b></span><span>Hadir <b>${counts.HADIR}</b></span><span>Izin/Dinas <b>${counts.IZIN}</b></span></div>
-    <button class="qr-scan-launch" type="button" onclick="openQrAttendanceScanner()"><span>▣</span><div><b>Scan QR Anggota</b><small>Gunakan kamera HP untuk mencatat HADIR</small></div><strong>›</strong></button>
+    ${canUseQrAttendanceScannerClient() ? `<button class="qr-scan-launch" type="button" onclick="openQrAttendanceScanner()"><span>▣</span><div><b>Scan QR Anggota</b><small>Admin, Ketua, Sekretaris, Bendahara</small></div><strong>›</strong></button>` : ""}
     ${compactSearchHtml(compactUI.attendance.query, "filterAttendanceManager", "Cari nama atau sekolah...")}
     <div class="compact-tabs">${compactTabButton("Belum", "BELUM", compactUI.attendance.tab, counts.BELUM, "setAttendanceTab")}${compactTabButton("Hadir", "HADIR", compactUI.attendance.tab, counts.HADIR, "setAttendanceTab")}${compactTabButton("Izin/Dinas", "IZIN", compactUI.attendance.tab, counts.IZIN, "setAttendanceTab")}</div>
     <div class="compact-list">${rows}</div>
@@ -2987,6 +2993,121 @@ async function cancelFinanceTransaction(id) {
 
 
 /* =========================================================
+   V1.4.1 - LAPORAN KEUANGAN UMUM ANGGOTA (READ-ONLY)
+========================================================= */
+
+async function openPublicFinanceReport(tahunAjaran = "") {
+  showLoadingModal("Laporan Keuangan Umum");
+  try {
+    const res = await apiRequest("financePublicSummary", {
+      token: sessionToken,
+      tahunAjaran: tahunAjaran || compactUI.financePublic.tahunAjaran || ""
+    });
+    if (!res.success) throw new Error(res.message || "Laporan keuangan belum dapat dimuat.");
+
+    compactUI.financePublic.summary = res.summary || {};
+    compactUI.financePublic.monthly = res.monthly || [];
+    compactUI.financePublic.years = res.availableYears || [];
+    compactUI.financePublic.tahunAjaran = res.tahunAjaran || "";
+    compactUI.financePublic.page = 1;
+    renderPublicFinanceReport();
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
+}
+
+function renderPublicFinanceReport() {
+  const f = compactUI.financePublic;
+  const s = f.summary || {};
+  const pageSize = COMPACT_PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil((f.monthly || []).length / pageSize));
+  f.page = Math.min(Math.max(1, f.page || 1), totalPages);
+  const start = (f.page - 1) * pageSize;
+  const rows = (f.monthly || []).slice(start, start + pageSize);
+
+  const yearOptions = (f.years || []).length
+    ? f.years.map(y => `<option value="${escapeHtml(y)}" ${y === f.tahunAjaran ? "selected" : ""}>${escapeHtml(y)}</option>`).join("")
+    : `<option value="${escapeHtml(f.tahunAjaran || "2026/2027")}">${escapeHtml(f.tahunAjaran || "2026/2027")}</option>`;
+
+  const rowsHtml = rows.length ? rows.map(item => `
+    <div class="public-finance-row">
+      <div><strong>${escapeHtml(item.label || item.periode || "-")}</strong><small>Saldo kumulatif ${formatRupiah(item.saldoKumulatif || 0)}</small></div>
+      <div class="public-finance-row-values"><span class="finance-in">+${formatRupiah(item.pemasukan || 0)}</span><span class="finance-out">−${formatRupiah(item.pengeluaran || 0)}</span></div>
+    </div>
+  `).join("") : `<div class="empty-panel">Belum ada transaksi pada tahun ajaran ini.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-title-row"><div class="modal-icon compact">💳</div><div><h3>Laporan Keuangan Umum</h3><p class="modal-subtitle">Transparansi keuangan MGMP • hanya data agregat</p></div></div>
+
+    <label class="modal-label">Tahun Ajaran</label>
+    <select class="portal-select full" onchange="changePublicFinanceYear(this.value)">${yearOptions}</select>
+
+    <div class="public-finance-balance">
+      <small>Saldo Saat Ini</small><strong>${formatRupiah(s.saldo || 0)}</strong><span>${escapeHtml(f.tahunAjaran || "-")}</span>
+    </div>
+
+    <div class="public-finance-grid">
+      <div><small>Total Pemasukan</small><strong>${formatRupiah(s.totalPemasukan || 0)}</strong></div>
+      <div><small>Total Pengeluaran</small><strong>${formatRupiah(s.totalPengeluaran || 0)}</strong></div>
+      <div><small>Masuk Bulan Ini</small><strong>${formatRupiah(s.pemasukanBulanIni || 0)}</strong></div>
+      <div><small>Keluar Bulan Ini</small><strong>${formatRupiah(s.pengeluaranBulanIni || 0)}</strong></div>
+    </div>
+
+    <div class="public-finance-note">Laporan ini hanya menampilkan angka umum. Data pembayaran tiap anggota dan data internal Bendahara tidak ditampilkan.</div>
+    <div class="section-mini-title top-gap">Laporan Bulanan</div>
+    <div class="compact-list">${rowsHtml}</div>
+    ${compactPagerHtml(f.page, totalPages, "changePublicFinancePage")}
+
+    <button class="primary-button" type="button" onclick="openKasSaya()">💰 Buka Kas Saya</button>
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function compactPagerHtml(page, totalPages, handlerName) {
+  if (totalPages <= 1) return "";
+  return `<div class="compact-pager">
+    <button type="button" ${page <= 1 ? "disabled" : ""} onclick="${handlerName}(${page - 1})">‹ Sebelumnya</button>
+    <span>Halaman <b>${page}</b> / ${totalPages}</span>
+    <button type="button" ${page >= totalPages ? "disabled" : ""} onclick="${handlerName}(${page + 1})">Berikutnya ›</button>
+  </div>`;
+}
+
+function changePublicFinancePage(page) {
+  compactUI.financePublic.page = Number(page || 1);
+  renderPublicFinanceReport();
+}
+
+async function changePublicFinanceYear(year) {
+  compactUI.financePublic.tahunAjaran = year || "";
+  await openPublicFinanceReport(year || "");
+}
+
+
+/* =========================================================
+   V1.4.1 - AKSES SCANNER QR
+========================================================= */
+
+function canUseQrAttendanceScannerClient() {
+  if (!currentUser) return false;
+  if (currentUser.role === "Admin") return true;
+  if (currentUser.role !== "Pengurus") return false;
+
+  const jabatan = String(currentUser.jabatan || "").toLowerCase();
+  return jabatan.includes("ketua") || jabatan.includes("sekretaris") || jabatan.includes("bendahara");
+}
+
+async function openQrCenterAction() {
+  if (canUseQrAttendanceScannerClient()) {
+    await openQrAttendanceScanner();
+  } else {
+    await openDigitalMemberCard();
+  }
+}
+
+
+/* =========================================================
    V1.4 - KARTU ANGGOTA DIGITAL + QR ABSENSI
 ========================================================= */
 
@@ -3004,18 +3125,65 @@ function renderDigitalMemberCard() {
   const card = compactUI.qr.card;
   if (!card) return;
   const qrUrl = buildQrImageUrl(card.qrPayload);
+  const position = memberCardPositionLabel(card);
+  const statusLabel = memberCardStatusLabel(card.status);
+
   setModalHtml(`
     <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
-    <div class="digital-member-card">
-      <div class="digital-card-head"><img src="assets/logo.jpg" alt="Logo KOM 3"><div><small>MGMP BAHASA INGGRIS SMP</small><strong>KOMISARIAT 3</strong></div></div>
-      <div class="digital-card-identity"><small>KARTU ANGGOTA DIGITAL</small><h3>${escapeHtml(card.nama)}</h3><p>${escapeHtml(card.sekolah)}</p><div class="digital-card-meta"><span>${escapeHtml(card.memberId)}</span><b>${escapeHtml(card.role || "Anggota")}</b></div></div>
-      <div class="digital-card-qr"><img src="${escapeHtml(qrUrl)}" alt="QR Anggota KOM 3" onerror="this.classList.add('hidden');document.getElementById('qrFallbackCode').classList.remove('hidden')"><div id="qrFallbackCode" class="qr-fallback-code hidden"><b>QR tidak dapat dimuat</b><small>${escapeHtml(card.memberId)}</small></div></div>
-      <div class="digital-card-foot"><span>STATUS: ${escapeHtml(card.status || "-")}</span><span>2026–2029</span></div>
+    <div class="digital-member-card premium-member-card">
+      <div class="premium-card-glow glow-one"></div><div class="premium-card-glow glow-two"></div>
+      <div class="digital-card-head premium-card-head">
+        <div class="premium-logo-ring"><img src="assets/logo.jpg" alt="Logo Komisariat 3"></div>
+        <div><small>MGMP BAHASA INGGRIS SMP</small><strong>KOMISARIAT 3</strong><em>Member Identity • 2026–2029</em></div>
+      </div>
+      <div class="premium-gold-line"></div>
+      <div class="digital-card-identity premium-card-identity">
+        <small>KARTU ANGGOTA DIGITAL</small>
+        <h3>${escapeHtml(card.nama)}</h3>
+        <p>${escapeHtml(card.sekolah)}</p>
+        <div class="digital-card-meta premium-card-meta">
+          <span>${escapeHtml(card.memberId)}</span>
+          <b title="${escapeHtml(card.jabatan || position)}">${escapeHtml(position)}</b>
+        </div>
+      </div>
+      <div class="premium-qr-caption"><span></span><b>QR ATTENDANCE</b><span></span></div>
+      <div class="digital-card-qr premium-card-qr"><img src="${escapeHtml(qrUrl)}" alt="QR Anggota KOM 3" onerror="this.classList.add('hidden');document.getElementById('qrFallbackCode').classList.remove('hidden')"><div id="qrFallbackCode" class="qr-fallback-code hidden"><b>QR tidak dapat dimuat</b><small>${escapeHtml(card.memberId)}</small></div></div>
+      <div class="premium-card-motto">Learn • Share • Inspire • Grow</div>
+      <div class="digital-card-foot premium-card-foot"><span><i></i> STATUS: ${escapeHtml(statusLabel)}</span><span>2026–2029</span></div>
     </div>
-    <div class="qr-security-note">Tunjukkan kartu ini kepada petugas saat absensi. QR hanya dapat diproses oleh akun Admin/Pengurus pada agenda aktif.</div>
+    <div class="qr-security-note">Tunjukkan QR ini kepada petugas saat absensi. Scanner hanya dapat digunakan oleh Admin, Ketua, Sekretaris, atau Bendahara pada agenda aktif.</div>
     <button class="secondary-button" type="button" onclick="rotateDigitalMemberQr()">Perbarui QR Saya</button>
     <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
   `);
+}
+
+function memberCardPositionLabel(card) {
+  const jabatanRaw = String((card && card.jabatan) || "").trim();
+  const jabatan = jabatanRaw.toLowerCase();
+  const role = String((card && card.role) || "Anggota").trim();
+
+  if (jabatan && jabatan !== "anggota" && jabatan !== "-") {
+    if (jabatan.includes("pengembangan kompetensi pedagogik")) return "Seksi Pedagogik";
+    if (jabatan.includes("pengembangan kompetensi sosial")) return "Seksi Sosial";
+    if (jabatan.includes("pengembangan kompetensi profesional")) return "Seksi Profesional";
+    if (jabatan.includes("pengembangan kompetensi kepribadian")) return "Seksi Kepribadian";
+    if (jabatan.includes("hubungan masyarakat") || jabatan === "humas") return "Humas";
+    if (jabatan.includes("sekretaris")) return "Sekretaris";
+    if (jabatan.includes("bendahara")) return "Bendahara";
+    if (jabatan.includes("ketua")) return "Ketua";
+    return jabatanRaw;
+  }
+
+  if (role === "Pengurus") return "Pengurus";
+  if (role === "Admin") return "Admin";
+  return "Anggota";
+}
+
+function memberCardStatusLabel(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "ACTIVE" || value === "AKTIF") return "AKTIF";
+  if (value === "PENDING") return "MENUNGGU";
+  return value || "-";
 }
 
 function buildQrImageUrl(payload) {
@@ -3201,7 +3369,7 @@ async function openFeature(name) {
 
   if (name === "Keuangan") {
     if (isFinanceManagerClient()) await openFinanceCenter();
-    else await openKasSaya();
+    else await openPublicFinanceReport();
     return;
   }
 
