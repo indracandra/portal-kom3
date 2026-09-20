@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.4.1
+   PORTAL KOM 3 - FRONTEND V1.4.2
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -54,6 +54,13 @@
    - Laporan keuangan umum read-only untuk anggota
    - Kartu digital premium menampilkan jabatan organisasi
    - Scanner QR: Admin, Ketua, Sekretaris, Bendahara
+
+   TAMBAHAN V1.4.2:
+   - Cache client-side untuk mempercepat buka ulang fitur
+   - Dedup request agar request yang sama tidak dikirim ganda
+   - Keuangan Manager: lazy-load data berat per tab
+   - Scanner QR tanpa refresh dashboard setiap peserta
+   - Premium scan bell + toggle suara
 ========================================================= */
 
 const APP_CONFIG = {
@@ -98,19 +105,168 @@ const compactUI = {
     tahunAjaran: "", period: "", tab: "SUMMARY",
     transactionFilter: "ALL", transactionQuery: "", transactionVisible: 5,
     memberStatus: "BELUM_BAYAR", memberQuery: "", memberVisible: 5,
-    reportVisible: 5
+    reportVisible: 5,
+    ledgerLoaded: false, membersLoaded: false
   },
   financePublic: { summary: null, monthly: [], years: [], tahunAjaran: "", page: 1 },
-  qr: { card: null, stream: null, detector: null, scanning: false, lastPayload: "" },
+  qr: {
+    card: null, stream: null, detector: null, scanning: false, lastPayload: "",
+    soundEnabled: localStorage.getItem("kom3_scan_sound") !== "off"
+  },
   portalSettings: null
 };
+
+let scanAudioContext = null;
+let portalWarmupStarted = false;
 
 
 /* =========================================================
    API
 ========================================================= */
 
-async function apiRequest(action, payload = {}) {
+const API_CACHE_PREFIX = "kom3_v142_cache_";
+const API_READ_TTL = {
+  dashboard: 30000,
+  adminSummary: 20000,
+  listUsers: 45000,
+  listAgendas: 60000,
+  listAnnouncements: 60000,
+  attendanceManager: 15000,
+  myAttendance: 30000,
+  agendaOptions: 60000,
+  myLeaves: 30000,
+  listLeavesManager: 20000,
+  listMeetingDocuments: 60000,
+  listAgendasPublic: 90000,
+  listAnnouncementsPublic: 90000,
+  portalSettings: 300000,
+  prayerTimes: 600000,
+  kasMySummary: 20000,
+  listKasPaymentsManager: 20000,
+  financeSummary: 20000,
+  financeTransactions: 20000,
+  financeMemberRecap: 20000,
+  financePublicSummary: 30000,
+  myDigitalCard: 300000,
+  qrAttendanceContext: 15000
+};
+
+const API_MUTATION_ACTIONS = new Set([
+  "approveUser", "rejectUser", "updateUserAccess", "resetUserPassword",
+  "markAttendance", "submitLeave", "reviewLeave",
+  "saveAgenda", "setAgendaStatus",
+  "saveAnnouncement", "setAnnouncementStatus",
+  "saveMeetingDocument", "setMeetingDocumentStatus",
+  "savePortalSettings", "submitKasPayment", "reviewKasPayment",
+  "saveFinanceTransaction", "setFinanceTransactionStatus",
+  "rotateMyQrToken", "scanAttendanceQr"
+]);
+
+const apiMemoryCache = new Map();
+const apiInflightRequests = new Map();
+
+function stableApiPayload_(payload) {
+  const source = payload || {};
+  const copy = {};
+  Object.keys(source).sort().forEach(key => {
+    if (key === "token") return;
+    copy[key] = source[key];
+  });
+  return JSON.stringify(copy);
+}
+
+function simpleHash_(text) {
+  let hash = 2166136261;
+  const value = String(text || "");
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function apiCacheKey_(action, payload) {
+  const userKey = currentUser && currentUser.id ? currentUser.id : "anon";
+  return action + "|" + userKey + "|" + stableApiPayload_(payload);
+}
+
+function readApiCache_(key, ttl) {
+  const now = Date.now();
+  const memory = apiMemoryCache.get(key);
+  if (memory && now - memory.time <= ttl) return memory.value;
+
+  try {
+    const raw = sessionStorage.getItem(API_CACHE_PREFIX + simpleHash_(key));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.key !== key || now - Number(parsed.time || 0) > ttl) {
+      sessionStorage.removeItem(API_CACHE_PREFIX + simpleHash_(key));
+      return null;
+    }
+    apiMemoryCache.set(key, { time: parsed.time, value: parsed.value });
+    return parsed.value;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeApiCache_(key, value) {
+  const item = { time: Date.now(), value };
+  apiMemoryCache.set(key, item);
+  try {
+    sessionStorage.setItem(
+      API_CACHE_PREFIX + simpleHash_(key),
+      JSON.stringify({ key, time: item.time, value })
+    );
+  } catch (e) {
+    // Jika storage browser penuh, cache memory tetap bekerja.
+  }
+}
+
+function clearApiReadCache() {
+  apiMemoryCache.clear();
+  apiInflightRequests.clear();
+  try {
+    const removeKeys = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key && key.indexOf(API_CACHE_PREFIX) === 0) removeKeys.push(key);
+    }
+    removeKeys.forEach(key => sessionStorage.removeItem(key));
+  } catch (e) {}
+}
+
+function primeApiReadCache_(action, payload, value) {
+  if (!API_READ_TTL[action] || !value || !value.success) return;
+  writeApiCache_(apiCacheKey_(action, payload || {}), value);
+}
+
+function schedulePortalWarmup() {
+  if (portalWarmupStarted || !sessionToken || !currentUser) return;
+  portalWarmupStarted = true;
+  setTimeout(() => portalWarmup_().catch(() => {}), 700);
+}
+
+async function portalWarmup_() {
+  const res = await performApiRequest_("performancePrefetch", { token: sessionToken });
+  if (!res || !res.success || !res.payloads) return;
+  const p = res.payloads;
+  const tokenPayload = { token: sessionToken };
+
+  if (p.listAgendasPublic) primeApiReadCache_("listAgendasPublic", tokenPayload, p.listAgendasPublic);
+  if (p.listAnnouncementsPublic) primeApiReadCache_("listAnnouncementsPublic", tokenPayload, p.listAnnouncementsPublic);
+  if (p.myAttendance) primeApiReadCache_("myAttendance", tokenPayload, p.myAttendance);
+  if (p.kasMySummary) primeApiReadCache_("kasMySummary", tokenPayload, p.kasMySummary);
+  if (p.financePublicSummary) primeApiReadCache_("financePublicSummary", { token: sessionToken, tahunAjaran: "" }, p.financePublicSummary);
+
+  if (p.adminSummary) primeApiReadCache_("adminSummary", tokenPayload, p.adminSummary);
+  if (p.listAgendas) primeApiReadCache_("listAgendas", tokenPayload, p.listAgendas);
+  if (p.listAnnouncements) primeApiReadCache_("listAnnouncements", tokenPayload, p.listAnnouncements);
+  if (p.listMeetingDocuments) primeApiReadCache_("listMeetingDocuments", tokenPayload, p.listMeetingDocuments);
+  if (p.financeSummary) primeApiReadCache_("financeSummary", tokenPayload, p.financeSummary);
+}
+
+async function performApiRequest_(action, payload) {
   if (!APP_CONFIG.apiUrl || APP_CONFIG.apiUrl.includes("PASTE_URL_APPS_SCRIPT")) {
     throw new Error("URL Apps Script belum dimasukkan pada app.js.");
   }
@@ -121,20 +277,40 @@ async function apiRequest(action, payload = {}) {
     headers: {
       "Content-Type": "text/plain;charset=utf-8"
     },
-    body: JSON.stringify({
-      action,
-      ...payload
-    })
+    body: JSON.stringify({ action, ...payload })
   });
 
   const text = await response.text();
-
   try {
     return JSON.parse(text);
   } catch (e) {
     console.error("Server response:", text);
     throw new Error("Server tidak memberikan response yang valid.");
   }
+}
+
+async function apiRequest(action, payload = {}) {
+  const ttl = Number(API_READ_TTL[action] || 0);
+  const cacheKey = ttl ? apiCacheKey_(action, payload) : "";
+
+  if (ttl) {
+    const cached = readApiCache_(cacheKey, ttl);
+    if (cached) return cached;
+    if (apiInflightRequests.has(cacheKey)) return apiInflightRequests.get(cacheKey);
+  }
+
+  const task = performApiRequest_(action, payload)
+    .then(result => {
+      if (ttl && result && result.success) writeApiCache_(cacheKey, result);
+      if (API_MUTATION_ACTIONS.has(action) && result && result.success) clearApiReadCache();
+      return result;
+    })
+    .finally(() => {
+      if (ttl) apiInflightRequests.delete(cacheKey);
+    });
+
+  if (ttl) apiInflightRequests.set(cacheKey, task);
+  return task;
 }
 
 
@@ -312,6 +488,7 @@ async function loadDashboard() {
   // Tidak menahan proses login. Jika API jadwal salat gagal,
   // seluruh fungsi Portal tetap berjalan seperti V1.2.3.
   loadPrayerWidget().catch(() => {});
+  schedulePortalWarmup();
 }
 
 function updateProfileDisplay(user) {
@@ -2731,29 +2908,51 @@ async function openFinanceCenter(tab = "SUMMARY") {
 
   showLoadingModal("Keuangan MGMP");
   try {
-    const [summaryRes, ledgerRes, recapRes] = await Promise.all([
-      apiRequest("financeSummary", { token: sessionToken }),
-      apiRequest("financeTransactions", { token: sessionToken }),
-      apiRequest("financeMemberRecap", { token: sessionToken })
-    ]);
+    const requestedTab = tab || "SUMMARY";
+    const summaryPromise = apiRequest("financeSummary", { token: sessionToken });
+    const tabPromise = requestedTab === "TRANSACTIONS"
+      ? apiRequest("financeTransactions", { token: sessionToken })
+      : requestedTab === "MEMBERS"
+        ? apiRequest("financeMemberRecap", { token: sessionToken })
+        : null;
 
+    const summaryRes = await summaryPromise;
     if (!summaryRes.success) throw new Error(summaryRes.message || "Gagal memuat ringkasan keuangan.");
-    if (!ledgerRes.success) throw new Error(ledgerRes.message || "Gagal memuat transaksi.");
-    if (!recapRes.success) throw new Error(recapRes.message || "Gagal memuat rekap kas.");
 
     compactUI.finance.summary = summaryRes.summary || {};
     compactUI.finance.monthly = summaryRes.monthly || [];
-    compactUI.finance.ledger = ledgerRes.transactions || [];
-    compactUI.finance.members = recapRes.members || [];
-    compactUI.finance.periods = recapRes.periods || [];
-    compactUI.finance.tahunAjaran = summaryRes.tahunAjaran || recapRes.tahunAjaran || "";
-    compactUI.finance.period = recapRes.periode || summaryRes.currentPeriod || "";
-    compactUI.finance.tab = tab || "SUMMARY";
+    compactUI.finance.tahunAjaran = summaryRes.tahunAjaran || "";
+    compactUI.finance.period = summaryRes.currentPeriod || compactUI.finance.period || "";
+    compactUI.finance.tab = requestedTab;
     compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE;
     compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
     compactUI.finance.reportVisible = COMPACT_PAGE_SIZE;
     compactUI.finance.transactionQuery = "";
     compactUI.finance.memberQuery = "";
+
+    if (requestedTab === "SUMMARY") {
+      compactUI.finance.ledgerLoaded = false;
+      compactUI.finance.membersLoaded = false;
+      renderFinanceCenter();
+      return;
+    }
+
+    if (requestedTab === "TRANSACTIONS") {
+      const ledgerRes = await tabPromise;
+      if (!ledgerRes.success) throw new Error(ledgerRes.message || "Gagal memuat transaksi.");
+      compactUI.finance.ledger = ledgerRes.transactions || [];
+      compactUI.finance.ledgerLoaded = true;
+    }
+
+    if (requestedTab === "MEMBERS") {
+      const recapRes = await tabPromise;
+      if (!recapRes.success) throw new Error(recapRes.message || "Gagal memuat rekap kas.");
+      compactUI.finance.members = recapRes.members || [];
+      compactUI.finance.periods = recapRes.periods || [];
+      compactUI.finance.period = recapRes.periode || compactUI.finance.period;
+      compactUI.finance.tahunAjaran = summaryRes.tahunAjaran || recapRes.tahunAjaran || "";
+      compactUI.finance.membersLoaded = true;
+    }
 
     renderFinanceCenter();
   } catch (err) {
@@ -2796,8 +2995,9 @@ function renderFinanceCenter() {
 }
 
 function renderFinanceSummaryTab() {
-  const s = compactUI.finance.summary || {};
-  const latest = (compactUI.finance.ledger || []).filter(x => x.status === "AKTIF").slice(0, 3);
+  const f = compactUI.finance;
+  const s = f.summary || {};
+  const latest = f.ledgerLoaded ? (f.ledger || []).filter(x => x.status === "AKTIF").slice(0, 3) : [];
   return `
     <div class="finance-stat-grid">
       ${financeStatCard("Pemasukan Bulan Ini", formatRupiah(s.pemasukanBulanIni || 0), "↗")}
@@ -2810,7 +3010,7 @@ function renderFinanceSummaryTab() {
       <button class="secondary-button compact-secondary" type="button" onclick="openKasVerification()">Verifikasi Kas</button>
     </div>
     <div class="section-mini-title top-gap">Transaksi Terbaru</div>
-    <div class="compact-list">${latest.length ? latest.map(financeTransactionCard).join("") : `<div class="empty-panel">Belum ada transaksi.</div>`}</div>
+    <div class="compact-list">${f.ledgerLoaded ? (latest.length ? latest.map(financeTransactionCard).join("") : `<div class="empty-panel">Belum ada transaksi.</div>`) : `<div class="empty-panel compact-info-panel">Data transaksi dimuat saat tab <b>Transaksi</b> dibuka agar Keuangan tampil lebih cepat.</div>`}</div>
   `;
 }
 
@@ -2818,16 +3018,48 @@ function financeStatCard(label, value, icon) {
   return `<div class="finance-stat-card"><span>${icon}</span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`;
 }
 
-function setFinanceTab(tab) {
-  compactUI.finance.tab = tab;
-  compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE;
-  compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
-  compactUI.finance.reportVisible = COMPACT_PAGE_SIZE;
+async function setFinanceTab(tab) {
+  const f = compactUI.finance;
+  f.tab = tab;
+  f.transactionVisible = COMPACT_PAGE_SIZE;
+  f.memberVisible = COMPACT_PAGE_SIZE;
+  f.reportVisible = COMPACT_PAGE_SIZE;
+
+  if (tab === "TRANSACTIONS" && !f.ledgerLoaded) {
+    renderFinanceCenter();
+    try {
+      const res = await apiRequest("financeTransactions", { token: sessionToken });
+      if (!res.success) throw new Error(res.message || "Gagal memuat transaksi.");
+      f.ledger = res.transactions || [];
+      f.ledgerLoaded = true;
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  if (tab === "MEMBERS" && !f.membersLoaded) {
+    renderFinanceCenter();
+    try {
+      const res = await apiRequest("financeMemberRecap", {
+        token: sessionToken,
+        tahunAjaran: f.tahunAjaran
+      });
+      if (!res.success) throw new Error(res.message || "Gagal memuat rekap kas.");
+      f.members = res.members || [];
+      f.periods = res.periods || [];
+      f.period = res.periode || f.period;
+      f.membersLoaded = true;
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
   renderFinanceCenter();
 }
 
 function renderFinanceTransactionsTab() {
   const f = compactUI.finance;
+  if (!f.ledgerLoaded) return `<div class="empty-panel compact-info-panel"><span class="mini-loader"></span> Memuat transaksi...</div>`;
   const q = String(f.transactionQuery || "").toLowerCase();
   const items = (f.ledger || []).filter(item => {
     if (f.transactionFilter !== "ALL" && item.jenis !== f.transactionFilter) return false;
@@ -2873,6 +3105,7 @@ async function loadFinanceMemberPeriod(period) {
     compactUI.finance.period = res.periode;
     compactUI.finance.periods = res.periods || compactUI.finance.periods;
     compactUI.finance.members = res.members || [];
+    compactUI.finance.membersLoaded = true;
     compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
     compactUI.finance.memberQuery = "";
     renderFinanceCenter();
@@ -2881,6 +3114,7 @@ async function loadFinanceMemberPeriod(period) {
 
 function renderFinanceMembersTab() {
   const f = compactUI.finance;
+  if (!f.membersLoaded) return `<div class="empty-panel compact-info-panel"><span class="mini-loader"></span> Memuat rekap kas anggota...</div>`;
   const q = String(f.memberQuery || "").toLowerCase();
   const items = (f.members || []).filter(item => {
     if (f.memberStatus !== "ALL" && item.status !== f.memberStatus) return false;
@@ -3215,6 +3449,7 @@ function renderQrAttendanceScanner(agenda) {
     <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
     <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="stopQrScanner();renderAttendanceManagerModal()">←</button><div><h3>Scan QR Absensi</h3><p class="modal-subtitle">${escapeHtml(agenda.nama || "Agenda Aktif")} • ${escapeHtml(agenda.tanggal || "")}</p></div></div>
     <div class="qr-scanner-shell"><video id="qrScannerVideo" playsinline muted></video><div class="qr-scan-frame"><span></span><span></span><span></span><span></span></div><div id="qrScannerStatus" class="qr-scanner-status">Tekan Mulai Kamera</div></div>
+    <div class="qr-scanner-toolbar"><button id="scanSoundToggle" class="scan-sound-toggle ${compactUI.qr.soundEnabled ? "is-on" : ""}" type="button" onclick="toggleScanSound()">${compactUI.qr.soundEnabled ? "🔊 Suara ON" : "🔇 Suara OFF"}</button><span>Bell premium berbunyi setelah absensi tersimpan.</span></div>
     <button id="qrStartButton" class="primary-button" type="button" onclick="startQrScanner()">📷 MULAI KAMERA</button>
     <div class="qr-manual-separator"><span>atau</span></div>
     <label class="modal-label">Input kode QR manual</label><input id="qrManualInput" class="portal-input" type="text" placeholder="Tempel hasil QR jika kamera tidak didukung">
@@ -3224,6 +3459,7 @@ function renderQrAttendanceScanner(agenda) {
 }
 
 async function startQrScanner() {
+  unlockScanAudio();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     showToast("Browser ini tidak mendukung akses kamera. Gunakan input kode manual atau absensi manual.");
     return;
@@ -3282,20 +3518,113 @@ async function processQrAttendancePayload(payload) {
 
 function showQrScanResult(res) {
   const status = document.getElementById("qrScannerStatus");
-  if (status) status.textContent = res.message || (res.success ? "Berhasil" : "Gagal");
-  if (navigator.vibrate) navigator.vibrate(res.success ? 120 : [80,60,80]);
-  showToast(res.message || (res.success ? "Kehadiran tercatat." : "QR tidak valid."));
-  if (res.success) loadDashboard().catch(() => {});
-  setTimeout(async () => {
+  const duplicate = !!(res && res.duplicate);
+  const success = !!(res && res.success);
+  const memberName = res && res.member && res.member.nama ? res.member.nama : "";
+  const time = res && res.time ? res.time : "";
+
+  if (status) {
+    if (success && !duplicate) {
+      status.innerHTML = `<b>✓ ${escapeHtml(memberName || "Kehadiran tercatat")}</b>${time ? `<small>HADIR • ${escapeHtml(time)}</small>` : ""}`;
+      status.classList.add("scan-success");
+      status.classList.remove("scan-warning", "scan-error");
+    } else if (success && duplicate) {
+      status.innerHTML = `<b>Sudah tercatat</b><small>${escapeHtml(memberName || res.message || "Peserta ini sudah hadir")}</small>`;
+      status.classList.add("scan-warning");
+      status.classList.remove("scan-success", "scan-error");
+    } else {
+      status.textContent = res.message || "QR tidak valid.";
+      status.classList.add("scan-error");
+      status.classList.remove("scan-success", "scan-warning");
+    }
+  }
+
+  if (success && !duplicate) {
+    playPremiumScanBell("success");
+    if (navigator.vibrate) navigator.vibrate(110);
+  } else if (success && duplicate) {
+    playPremiumScanBell("duplicate");
+    if (navigator.vibrate) navigator.vibrate(55);
+  } else {
+    playPremiumScanBell("error");
+    if (navigator.vibrate) navigator.vibrate([70, 55, 70]);
+  }
+
+  showToast(res.message || (success ? "Kehadiran tercatat." : "QR tidak valid."));
+
+  // V1.4.2: tidak lagi memanggil loadDashboard() setiap scan.
+  // Data dashboard akan dimuat ulang saat diperlukan; scanner tetap ringan untuk antrean peserta.
+  setTimeout(() => {
     compactUI.qr.lastPayload = "";
     const video = document.getElementById("qrScannerVideo");
+    if (status) {
+      status.classList.remove("scan-success", "scan-warning", "scan-error");
+    }
     if (video && compactUI.qr.stream) {
       compactUI.qr.scanning = true;
       if (status) status.textContent = "Siap scan anggota berikutnya";
       scanQrFrame();
     }
-  }, 1400);
+  }, duplicate ? 900 : 1150);
 }
+
+function unlockScanAudio() {
+  if (!compactUI.qr.soundEnabled) return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!scanAudioContext) scanAudioContext = new AudioCtx();
+    if (scanAudioContext.state === "suspended") scanAudioContext.resume().catch(() => {});
+  } catch (e) {}
+}
+
+function toggleScanSound() {
+  compactUI.qr.soundEnabled = !compactUI.qr.soundEnabled;
+  localStorage.setItem("kom3_scan_sound", compactUI.qr.soundEnabled ? "on" : "off");
+  if (compactUI.qr.soundEnabled) unlockScanAudio();
+  const btn = document.getElementById("scanSoundToggle");
+  if (btn) {
+    btn.textContent = compactUI.qr.soundEnabled ? "🔊 Suara ON" : "🔇 Suara OFF";
+    btn.classList.toggle("is-on", compactUI.qr.soundEnabled);
+  }
+  showToast(compactUI.qr.soundEnabled ? "Suara scanner diaktifkan." : "Suara scanner dimatikan.");
+}
+
+function playPremiumScanBell(type) {
+  if (!compactUI.qr.soundEnabled) return;
+  try {
+    unlockScanAudio();
+    if (!scanAudioContext) return;
+    const ctx = scanAudioContext;
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.12, now + 0.025);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.72);
+    master.connect(ctx.destination);
+
+    const notes = type === "success"
+      ? [{ f: 783.99, t: 0.00, d: 0.34, g: 0.75 }, { f: 1174.66, t: 0.18, d: 0.42, g: 0.58 }]
+      : type === "duplicate"
+        ? [{ f: 659.25, t: 0.00, d: 0.28, g: 0.48 }]
+        : [{ f: 329.63, t: 0.00, d: 0.24, g: 0.42 }, { f: 246.94, t: 0.16, d: 0.28, g: 0.34 }];
+
+    notes.forEach(note => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type === "error" ? "sine" : "triangle";
+      osc.frequency.setValueAtTime(note.f, now + note.t);
+      gain.gain.setValueAtTime(0.0001, now + note.t);
+      gain.gain.exponentialRampToValueAtTime(note.g, now + note.t + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + note.t + note.d);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(now + note.t);
+      osc.stop(now + note.t + note.d + 0.03);
+    });
+  } catch (e) {}
+}
+
 
 async function submitManualQrAttendance() {
   const payload = valueOf("qrManualInput");
@@ -3532,9 +3861,11 @@ async function logout() {
 function forceLogout() {
   sessionToken = "";
   currentUser = null;
+  portalWarmupStarted = false;
 
   localStorage.removeItem("kom3_token");
   localStorage.removeItem("kom3_user");
+  clearApiReadCache();
 
   const loginForm = document.getElementById("loginForm");
   if (loginForm) loginForm.reset();
