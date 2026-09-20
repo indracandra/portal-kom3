@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.4.3
+   PORTAL KOM 3 - FRONTEND V1.4.3.2
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -67,6 +67,12 @@
    - Ikon mata pada password pendaftaran/reset
    - Foto profil dikompres WebP sebelum dikirim
    - Avatar dashboard + pembaruan foto lewat menu Profil
+
+   HOTFIX V1.4.3.2:
+   - Bridge foto profil PRIVATE dari Apps Script ke browser
+   - Foto Drive tidak perlu dibagikan publik
+   - Base64 private hanya dipakai untuk display akun yang sedang login
+   - Cache ringan agar foto tidak diambil ulang terus-menerus
 ========================================================= */
 
 const APP_CONFIG = {
@@ -128,12 +134,18 @@ let pendingRegisterPhoto = null;
 let pendingProfilePhoto = null;
 let forgotResetState = { identifier: "", maskedEmail: "" };
 
+// V1.4.3.2 - foto profil private hanya hidup pada sesi browser aktif.
+// Data URL tidak ditulis ke sheet dan tidak mengganti PHOTO_URL/PHOTO_FILE_ID.
+let resolvedProfilePhotoDataUrl = "";
+let resolvedProfilePhotoFileId = "";
+let profilePhotoLoadPromise = null;
+
 
 /* =========================================================
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v143_cache_";
+const API_CACHE_PREFIX = "kom3_v1432_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -157,6 +169,7 @@ const API_READ_TTL = {
   financeMemberRecap: 20000,
   financePublicSummary: 30000,
   myDigitalCard: 300000,
+  getMyProfilePhoto: 300000,
   qrAttendanceContext: 15000
 };
 
@@ -673,6 +686,122 @@ function initialsFromName(name) {
 }
 
 
+function profilePhotoFileIdFromUser_(user) {
+  if (!user) return "";
+
+  const rawUrl = String(user.photoUrl || "");
+  const privatePrefix = "private://profile/";
+  if (rawUrl.startsWith(privatePrefix)) {
+    return rawUrl.substring(privatePrefix.length).trim();
+  }
+
+  return String(user.photoFileId || "").trim();
+}
+
+
+function profilePhotoSourceForUser_(user) {
+  if (!user) return "";
+
+  const fileId = profilePhotoFileIdFromUser_(user);
+  if (fileId && resolvedProfilePhotoFileId === fileId && resolvedProfilePhotoDataUrl) {
+    return resolvedProfilePhotoDataUrl;
+  }
+
+  const rawUrl = String(user.photoUrl || "");
+  if (rawUrl.startsWith("private://profile/")) return "";
+
+  // Kompatibilitas foto versi lama yang masih memakai URL publik Drive.
+  return rawUrl;
+}
+
+
+function applyResolvedProfilePhoto_() {
+  if (!currentUser) return;
+  const source = profilePhotoSourceForUser_(currentUser);
+
+  setAvatarDisplay(
+    "dashboardAvatarImg",
+    "dashboardAvatarInitials",
+    source,
+    currentUser.nama
+  );
+
+  // Jika modal Profil sedang terbuka, perbarui juga tanpa membuka ulang modal.
+  if (document.getElementById("profileModalPhotoImg")) {
+    setAvatarDisplay(
+      "profileModalPhotoImg",
+      "profileModalInitials",
+      source,
+      currentUser.nama
+    );
+  }
+}
+
+
+async function ensurePrivateProfilePhotoLoaded_(force = false) {
+  if (!currentUser || !sessionToken) return "";
+
+  const fileId = profilePhotoFileIdFromUser_(currentUser);
+  if (!fileId) {
+    resolvedProfilePhotoDataUrl = "";
+    resolvedProfilePhotoFileId = "";
+    return "";
+  }
+
+  if (!force && resolvedProfilePhotoFileId === fileId && resolvedProfilePhotoDataUrl) {
+    return resolvedProfilePhotoDataUrl;
+  }
+
+  if (!force && profilePhotoLoadPromise) return profilePhotoLoadPromise;
+
+  profilePhotoLoadPromise = (async () => {
+    try {
+      const res = await apiRequest("getMyProfilePhoto", { token: sessionToken });
+
+      if (!res || !res.success) {
+        if (res && res.sessionExpired) forceLogout();
+        return "";
+      }
+
+      if (!res.hasPhoto || !res.base64) {
+        resolvedProfilePhotoDataUrl = "";
+        resolvedProfilePhotoFileId = "";
+        applyResolvedProfilePhoto_();
+        return "";
+      }
+
+      const responseFileId = String(res.fileId || fileId);
+      const mimeType = String(res.mimeType || "image/webp");
+      const dataUrl = `data:${mimeType};base64,${res.base64}`;
+
+      resolvedProfilePhotoFileId = responseFileId;
+      resolvedProfilePhotoDataUrl = dataUrl;
+
+      // Sinkronkan ID file di memori/browser, tanpa mengganti PHOTO_URL private.
+      currentUser.photoFileId = responseFileId;
+      localStorage.setItem("kom3_user", JSON.stringify(currentUser));
+
+      applyResolvedProfilePhoto_();
+      return dataUrl;
+    } catch (err) {
+      // Foto tidak boleh menghambat fitur Portal. Avatar inisial tetap menjadi fallback.
+      return "";
+    } finally {
+      profilePhotoLoadPromise = null;
+    }
+  })();
+
+  return profilePhotoLoadPromise;
+}
+
+
+function resetResolvedProfilePhoto_() {
+  resolvedProfilePhotoDataUrl = "";
+  resolvedProfilePhotoFileId = "";
+  profilePhotoLoadPromise = null;
+}
+
+
 function setAvatarDisplay(imageId, initialsId, photoUrl, name) {
   const img = document.getElementById(imageId);
   const initials = document.getElementById(initialsId);
@@ -747,7 +876,15 @@ function openMyProfile() {
     <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
   `);
 
-  setAvatarDisplay("profileModalPhotoImg", "profileModalInitials", currentUser.photoUrl || "", currentUser.nama);
+  setAvatarDisplay(
+    "profileModalPhotoImg",
+    "profileModalInitials",
+    profilePhotoSourceForUser_(currentUser),
+    currentUser.nama
+  );
+
+  // V1.4.3.2: ambil foto private di background; modal tetap responsif.
+  ensurePrivateProfilePhotoLoaded_().catch(() => {});
 }
 
 
@@ -773,10 +910,18 @@ async function saveProfilePhotoUpdate() {
     if (!res.success) return;
 
     currentUser.photoUrl = res.photoUrl || "";
+    // Backend V1.4.3.1 mengembalikan private://profile/FILE_ID.
+    // Ambil FILE_ID dari URL agar tidak tertahan ID foto lama di session browser.
+    currentUser.photoFileId = profilePhotoFileIdFromUser_(currentUser);
     localStorage.setItem("kom3_user", JSON.stringify(currentUser));
+
     clearApiReadCache();
+    resetResolvedProfilePhoto_();
     updateProfileDisplay(currentUser);
     pendingProfilePhoto = null;
+
+    // Ambil foto private terbaru sebelum/ketika profil dibuka ulang.
+    ensurePrivateProfilePhotoLoaded_(true).catch(() => {});
     setTimeout(openMyProfile, 250);
   } catch (err) {
     showToast(err.message);
@@ -936,7 +1081,16 @@ async function loadDashboard() {
 
 function updateProfileDisplay(user) {
   setText("dashboardName", user.nama);
-  setAvatarDisplay("dashboardAvatarImg", "dashboardAvatarInitials", user.photoUrl || "", user.nama);
+  setAvatarDisplay(
+    "dashboardAvatarImg",
+    "dashboardAvatarInitials",
+    profilePhotoSourceForUser_(user),
+    user.nama
+  );
+
+  // V1.4.3.2: foto private dimuat setelah data dashboard tampil,
+  // sehingga kecepatan login/dashboard tidak ditahan oleh foto.
+  ensurePrivateProfilePhotoLoaded_().catch(() => {});
 
   const schoolText =
     user.role === "Pengurus" && user.jabatan && user.jabatan !== "Pengurus"
@@ -4304,6 +4458,7 @@ function forceLogout() {
 
   localStorage.removeItem("kom3_token");
   localStorage.removeItem("kom3_user");
+  resetResolvedProfilePhoto_();
   clearApiReadCache();
 
   const loginForm = document.getElementById("loginForm");
