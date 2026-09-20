@@ -2145,6 +2145,13 @@ async function loadPrayerWidget() {
   const section = document.getElementById("prayerSection");
   if (!section || !sessionToken) return;
 
+  // V1.2.5.2: tampilkan kartu segera agar tidak terlihat hilang saat request berjalan.
+  // Kartu hanya disembunyikan jika Admin benar-benar menonaktifkan fitur.
+  section.classList.remove("hidden");
+  setText("prayerNextName", "Memuat jadwal...");
+  setText("prayerNextTime", "--:-- WIB");
+  setText("prayerLocation", "Kawali, Ciamis");
+
   try {
     const res = await apiRequest("prayerTimes", { token: sessionToken });
 
