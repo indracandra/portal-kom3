@@ -2701,3 +2701,11 @@ button:disabled {
   .premium-card-qr{width:176px;height:176px}
   .premium-card-identity h3{font-size:20px}
 }
+
+
+/* =========================================================
+   V1.4.2 - PERFORMANCE FEEDBACK + PREMIUM SCAN BELL
+========================================================= */
+.compact-info-panel{font-size:12px;line-height:1.55}.mini-loader{display:inline-block;width:14px;height:14px;border:2px solid #d8e2ea;border-top-color:#0b5d8f;border-radius:50%;vertical-align:-2px;margin-right:6px;animation:kom3Spin .8s linear infinite}@keyframes kom3Spin{to{transform:rotate(360deg)}}
+.qr-scanner-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:-2px 0 12px;padding:9px 10px;border:1px solid #e1e8ee;border-radius:14px;background:#f8fbfd}.qr-scanner-toolbar>span{font-size:10px;line-height:1.35;color:#7a8995;text-align:right}.scan-sound-toggle{border:1px solid #d8e2ea;background:#fff;color:#284359;border-radius:999px;padding:8px 11px;font-size:10px;font-weight:800;white-space:nowrap;cursor:pointer}.scan-sound-toggle.is-on{border-color:#d7ba50;background:#fff8dc;color:#745b00}.qr-scanner-status b,.qr-scanner-status small{display:block}.qr-scanner-status small{margin-top:3px;opacity:.85}.qr-scanner-status.scan-success{background:rgba(7,91,70,.92)}.qr-scanner-status.scan-warning{background:rgba(126,92,10,.92)}.qr-scanner-status.scan-error{background:rgba(126,38,38,.92)}
+@media(max-width:480px){.qr-scanner-toolbar{align-items:flex-start}.qr-scanner-toolbar>span{font-size:9px;max-width:150px}}
