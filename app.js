@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.3
+   PORTAL KOM 3 - FRONTEND V1.4
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -43,6 +43,12 @@
    - Saldo, pemasukan, pengeluaran, tunggakan kas
    - Rekap kas anggota per bulan
    - Laporan bulanan/tahun ajaran
+
+   TAMBAHAN V1.4:
+   - Kartu Anggota Digital
+   - QR token unik per anggota
+   - Scanner QR kehadiran khusus Admin/Pengurus
+   - Absensi manual tetap dipertahankan
 ========================================================= */
 
 const APP_CONFIG = {
@@ -89,6 +95,7 @@ const compactUI = {
     memberStatus: "BELUM_BAYAR", memberQuery: "", memberVisible: 5,
     reportVisible: 5
   },
+  qr: { card: null, stream: null, detector: null, scanning: false, lastPayload: "" },
   portalSettings: null
 };
 
@@ -2008,6 +2015,7 @@ function renderAttendanceManagerModal() {
     <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
     <h3>Absensi Pertemuan</h3><p class="modal-subtitle"><b>${escapeHtml(agenda.nama || "Agenda Aktif")}</b><br>${escapeHtml(agenda.tanggal || "")} • ${escapeHtml(agenda.jam || "")}</p>
     <div class="compact-counter-strip"><span>Belum <b>${counts.BELUM}</b></span><span>Hadir <b>${counts.HADIR}</b></span><span>Izin/Dinas <b>${counts.IZIN}</b></span></div>
+    <button class="qr-scan-launch" type="button" onclick="openQrAttendanceScanner()"><span>▣</span><div><b>Scan QR Anggota</b><small>Gunakan kamera HP untuk mencatat HADIR</small></div><strong>›</strong></button>
     ${compactSearchHtml(compactUI.attendance.query, "filterAttendanceManager", "Cari nama atau sekolah...")}
     <div class="compact-tabs">${compactTabButton("Belum", "BELUM", compactUI.attendance.tab, counts.BELUM, "setAttendanceTab")}${compactTabButton("Hadir", "HADIR", compactUI.attendance.tab, counts.HADIR, "setAttendanceTab")}${compactTabButton("Izin/Dinas", "IZIN", compactUI.attendance.tab, counts.IZIN, "setAttendanceTab")}</div>
     <div class="compact-list">${rows}</div>
@@ -2976,6 +2984,168 @@ async function cancelFinanceTransaction(id) {
 }
 
 
+
+
+/* =========================================================
+   V1.4 - KARTU ANGGOTA DIGITAL + QR ABSENSI
+========================================================= */
+
+async function openDigitalMemberCard() {
+  showLoadingModal("Kartu Anggota Digital");
+  try {
+    const res = await apiRequest("myDigitalCard", { token: sessionToken });
+    if (!res.success) throw new Error(res.message || "Kartu anggota belum tersedia.");
+    compactUI.qr.card = res.card || null;
+    renderDigitalMemberCard();
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+function renderDigitalMemberCard() {
+  const card = compactUI.qr.card;
+  if (!card) return;
+  const qrUrl = buildQrImageUrl(card.qrPayload);
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="digital-member-card">
+      <div class="digital-card-head"><img src="assets/logo.jpg" alt="Logo KOM 3"><div><small>MGMP BAHASA INGGRIS SMP</small><strong>KOMISARIAT 3</strong></div></div>
+      <div class="digital-card-identity"><small>KARTU ANGGOTA DIGITAL</small><h3>${escapeHtml(card.nama)}</h3><p>${escapeHtml(card.sekolah)}</p><div class="digital-card-meta"><span>${escapeHtml(card.memberId)}</span><b>${escapeHtml(card.role || "Anggota")}</b></div></div>
+      <div class="digital-card-qr"><img src="${escapeHtml(qrUrl)}" alt="QR Anggota KOM 3" onerror="this.classList.add('hidden');document.getElementById('qrFallbackCode').classList.remove('hidden')"><div id="qrFallbackCode" class="qr-fallback-code hidden"><b>QR tidak dapat dimuat</b><small>${escapeHtml(card.memberId)}</small></div></div>
+      <div class="digital-card-foot"><span>STATUS: ${escapeHtml(card.status || "-")}</span><span>2026–2029</span></div>
+    </div>
+    <div class="qr-security-note">Tunjukkan kartu ini kepada petugas saat absensi. QR hanya dapat diproses oleh akun Admin/Pengurus pada agenda aktif.</div>
+    <button class="secondary-button" type="button" onclick="rotateDigitalMemberQr()">Perbarui QR Saya</button>
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function buildQrImageUrl(payload) {
+  // QR hanya untuk visual. Token tetap divalidasi oleh backend saat dipindai.
+  return "https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=12&data=" + encodeURIComponent(payload || "");
+}
+
+async function rotateDigitalMemberQr() {
+  if (!confirm("Perbarui QR anggota? QR lama akan langsung tidak berlaku.")) return;
+  try {
+    const res = await apiRequest("rotateMyQrToken", { token: sessionToken });
+    showToast(res.message);
+    if (res.success) await openDigitalMemberCard();
+  } catch (err) { showToast(err.message); }
+}
+
+async function openQrAttendanceScanner() {
+  stopQrScanner();
+  showLoadingModal("QR Attendance");
+  try {
+    const res = await apiRequest("qrAttendanceContext", { token: sessionToken });
+    if (!res.success) throw new Error(res.message || "Scanner belum dapat digunakan.");
+    renderQrAttendanceScanner(res.agenda);
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+function renderQrAttendanceScanner(agenda) {
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="stopQrScanner();renderAttendanceManagerModal()">←</button><div><h3>Scan QR Absensi</h3><p class="modal-subtitle">${escapeHtml(agenda.nama || "Agenda Aktif")} • ${escapeHtml(agenda.tanggal || "")}</p></div></div>
+    <div class="qr-scanner-shell"><video id="qrScannerVideo" playsinline muted></video><div class="qr-scan-frame"><span></span><span></span><span></span><span></span></div><div id="qrScannerStatus" class="qr-scanner-status">Tekan Mulai Kamera</div></div>
+    <button id="qrStartButton" class="primary-button" type="button" onclick="startQrScanner()">📷 MULAI KAMERA</button>
+    <div class="qr-manual-separator"><span>atau</span></div>
+    <label class="modal-label">Input kode QR manual</label><input id="qrManualInput" class="portal-input" type="text" placeholder="Tempel hasil QR jika kamera tidak didukung">
+    <button class="secondary-button" type="button" onclick="submitManualQrAttendance()">Proses Kode</button>
+    <button class="secondary-button" type="button" onclick="stopQrScanner();renderAttendanceManagerModal()">← Kembali ke Absensi</button>
+  `);
+}
+
+async function startQrScanner() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast("Browser ini tidak mendukung akses kamera. Gunakan input kode manual atau absensi manual.");
+    return;
+  }
+  if (!("BarcodeDetector" in window)) {
+    showToast("Scanner QR otomatis belum didukung browser ini. Gunakan Chrome Android terbaru atau input kode manual.");
+    return;
+  }
+
+  stopQrScanner();
+  try {
+    compactUI.qr.detector = new BarcodeDetector({ formats: ["qr_code"] });
+    compactUI.qr.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    const video = document.getElementById("qrScannerVideo");
+    if (!video) { stopQrScanner(); return; }
+    video.srcObject = compactUI.qr.stream;
+    await video.play();
+    compactUI.qr.scanning = true;
+    const status = document.getElementById("qrScannerStatus"); if (status) status.textContent = "Arahkan kamera ke QR anggota";
+    scanQrFrame();
+  } catch (err) {
+    stopQrScanner();
+    showToast("Kamera tidak dapat dibuka. Pastikan izin kamera diberikan.");
+  }
+}
+
+async function scanQrFrame() {
+  if (!compactUI.qr.scanning) return;
+  const video = document.getElementById("qrScannerVideo");
+  if (!video || video.readyState < 2) { requestAnimationFrame(scanQrFrame); return; }
+  try {
+    const codes = await compactUI.qr.detector.detect(video);
+    if (codes && codes.length && codes[0].rawValue) {
+      const payload = codes[0].rawValue;
+      if (payload !== compactUI.qr.lastPayload) {
+        compactUI.qr.lastPayload = payload;
+        compactUI.qr.scanning = false;
+        await processQrAttendancePayload(payload);
+        return;
+      }
+    }
+  } catch (e) {}
+  requestAnimationFrame(scanQrFrame);
+}
+
+async function processQrAttendancePayload(payload) {
+  const status = document.getElementById("qrScannerStatus");
+  if (status) status.textContent = "Memproses QR...";
+  try {
+    const res = await apiRequest("scanAttendanceQr", { token: sessionToken, qrPayload: payload });
+    showQrScanResult(res);
+  } catch (err) {
+    showQrScanResult({ success: false, message: err.message });
+  }
+}
+
+function showQrScanResult(res) {
+  const status = document.getElementById("qrScannerStatus");
+  if (status) status.textContent = res.message || (res.success ? "Berhasil" : "Gagal");
+  if (navigator.vibrate) navigator.vibrate(res.success ? 120 : [80,60,80]);
+  showToast(res.message || (res.success ? "Kehadiran tercatat." : "QR tidak valid."));
+  if (res.success) loadDashboard().catch(() => {});
+  setTimeout(async () => {
+    compactUI.qr.lastPayload = "";
+    const video = document.getElementById("qrScannerVideo");
+    if (video && compactUI.qr.stream) {
+      compactUI.qr.scanning = true;
+      if (status) status.textContent = "Siap scan anggota berikutnya";
+      scanQrFrame();
+    }
+  }, 1400);
+}
+
+async function submitManualQrAttendance() {
+  const payload = valueOf("qrManualInput");
+  if (!payload) { showToast("Masukkan kode QR terlebih dahulu."); return; }
+  await processQrAttendancePayload(payload);
+}
+
+function stopQrScanner() {
+  compactUI.qr.scanning = false;
+  if (compactUI.qr.stream) {
+    compactUI.qr.stream.getTracks().forEach(track => track.stop());
+    compactUI.qr.stream = null;
+  }
+  compactUI.qr.detector = null;
+  compactUI.qr.lastPayload = "";
+}
+
+
 /* =========================================================
    FEATURE ROUTER
 ========================================================= */
@@ -3032,6 +3202,11 @@ async function openFeature(name) {
   if (name === "Keuangan") {
     if (isFinanceManagerClient()) await openFinanceCenter();
     else await openKasSaya();
+    return;
+  }
+
+  if (name === "Kartu Anggota Digital") {
+    await openDigitalMemberCard();
     return;
   }
 
@@ -3157,6 +3332,7 @@ function setModalHtml(html) {
 }
 
 function closeModal() {
+  if (typeof stopQrScanner === "function") stopQrScanner();
   document.getElementById("featureModal").classList.add("hidden");
 }
 
