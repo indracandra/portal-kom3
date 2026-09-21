@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.6.1
+   PORTAL KOM 3 - FRONTEND V1.6.1.1
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -94,6 +94,12 @@
    - QRIS + transfer hingga 3 rekening bank + tunai
    - Bendahara dapat menetapkan periode final saat verifikasi
    - Pemasukan bulanan mengikuti tanggal verifikasi/penerimaan
+
+   TAMBAHAN V1.6.1.1:
+   - Tahun Ajaran dinamis dan sinkron pada Kas/Keuangan
+   - 12 bulan lintas Jul–Jun pada setiap Tahun Ajaran
+   - Label arus kas dipisahkan dari Bulan Kas
+   - Cache versi baru agar data lama tidak tertahan di browser
 ========================================================= */
 
 const APP_CONFIG = {
@@ -176,7 +182,7 @@ let profilePhotoLoadPromise = null;
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v150_cache_";
+const API_CACHE_PREFIX = "kom3_v1611_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -3513,9 +3519,11 @@ function renderFinanceKasPeriodControls() {
 async function setFinanceYear(year) {
   compactUI.finance.tahunAjaran = year;
   const periods = buildAcademicPeriodsClient(year);
-  const current = kasPeriodLabelClient(compactUI.finance.period) ? compactUI.finance.period : "";
+  const current = String(compactUI.finance.period || "");
   compactUI.finance.period = periods.some(p => p.value === current) ? current : (periods[0] ? periods[0].value : "");
   compactUI.finance.periods = periods;
+  compactUI.finance.ledgerLoaded = false;
+  compactUI.finance.membersLoaded = false;
   await openFinanceCenter(compactUI.finance.tab);
 }
 
@@ -3631,6 +3639,8 @@ async function openFinanceCenter(tab = "SUMMARY") {
     compactUI.finance.years = summaryRes.availableYears || [];
     compactUI.finance.periods = summaryRes.periods || compactUI.finance.periods || [];
     compactUI.finance.period = summaryRes.currentPeriod || compactUI.finance.period || "";
+    compactUI.finance.cashflowCurrentPeriod = summaryRes.cashflowCurrentPeriod || "";
+    compactUI.finance.cashflowCurrentPeriodLabel = summaryRes.cashflowCurrentPeriodLabel || kasPeriodLabelClient(summaryRes.cashflowCurrentPeriod || "");
     compactUI.finance.tab = requestedTab;
     compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE;
     compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
@@ -3675,7 +3685,7 @@ function renderFinanceCenter() {
     <div class="modal-title-row"><div class="modal-icon compact">📊</div><div><h3>Keuangan MGMP</h3><p class="modal-subtitle">${escapeHtml(f.tahunAjaran || "Tahun Ajaran")}</p></div></div>
 
     <div class="finance-hero">
-      <small>Saldo Saat Ini</small>
+      <small>Saldo Tahun Ajaran ${escapeHtml(f.tahunAjaran || "-")}</small>
       <strong>${formatRupiah(s.saldo || 0)}</strong>
       <span>Pemasukan ${formatRupiah(s.totalPemasukan || 0)} • Pengeluaran ${formatRupiah(s.totalPengeluaran || 0)}</span>
     </div>
@@ -3697,11 +3707,13 @@ function renderFinanceSummaryTab() {
   const s = f.summary || {};
   const latest = f.ledgerLoaded ? (f.ledger || []).filter(x => x.status === "AKTIF").slice(0, 3) : [];
   const periodLabel = kasPeriodLabelClient(f.period);
+  const cashflowLabel = f.cashflowCurrentPeriodLabel || kasPeriodLabelClient(f.cashflowCurrentPeriod || "");
   return `
     ${renderFinanceKasPeriodControls()}
+    <div class="finance-period-note finance-sync-note"><b>Bulan Kas</b> menentukan kewajiban yang dilihat. <b>Arus kas</b> mengikuti tanggal uang benar-benar diterima/diverifikasi.</div>
     <div class="finance-stat-grid">
-      ${financeStatCard("Pemasukan Bulan Ini", formatRupiah(s.pemasukanBulanIni || 0), "↗")}
-      ${financeStatCard("Pengeluaran Bulan Ini", formatRupiah(s.pengeluaranBulanIni || 0), "↘")}
+      ${financeStatCard("Pemasukan " + cashflowLabel, formatRupiah(s.pemasukanBulanIni || 0), "↗")}
+      ${financeStatCard("Pengeluaran " + cashflowLabel, formatRupiah(s.pengeluaranBulanIni || 0), "↘")}
       ${financeStatCard("Lunas " + periodLabel, String(s.kasLunas || 0) + " guru", "✓")}
       ${financeStatCard("Belum Bayar " + periodLabel, String(s.kasBelum || 0) + " guru", "!")}
     </div>
@@ -3863,7 +3875,7 @@ function openFinanceTransactionForm(id = "") {
     <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
     <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderFinanceCenter()">←</button><div><h3>${item ? "Edit" : "Tambah"} Transaksi</h3><p class="modal-subtitle">Pemasukan/pengeluaran selain kas guru.</p></div></div>
     <form onsubmit="submitFinanceTransaction(event,'${escapeJs(item ? item.id : "")}')">
-      <label class="modal-label">Tanggal</label><input id="financeDate" class="portal-input" type="date" value="${escapeHtml(item ? item.tanggal : today)}" required>
+      <label class="modal-label">Tanggal</label><input id="financeDate" class="portal-input" type="date" value="${escapeHtml(item ? item.tanggal : today)}" required><div class="file-note">Tahun ajaran transaksi ditentukan otomatis dari tanggal: Juli–Desember masuk tahun ajaran yang dimulai pada tahun tersebut; Januari–Juni masuk tahun ajaran sebelumnya.</div>
       <div class="manager-form-grid"><div><label class="modal-label">Jenis</label><select id="financeType" class="portal-select full"><option value="PEMASUKAN" ${item && item.jenis === "PEMASUKAN" ? "selected" : ""}>Pemasukan</option><option value="PENGELUARAN" ${item && item.jenis === "PENGELUARAN" ? "selected" : ""}>Pengeluaran</option></select></div><div><label class="modal-label">Nominal</label><input id="financeAmount" class="portal-input" type="number" min="1" step="1" value="${escapeHtml(item ? String(item.nominal) : "")}" placeholder="50000" required></div></div>
       <label class="modal-label">Kategori</label><input id="financeCategory" class="portal-input" type="text" maxlength="80" value="${escapeHtml(item ? item.kategori : "")}" placeholder="Contoh: ATK, Konsumsi, Donasi" required>
       <label class="modal-label">Uraian</label><input id="financeDescription" class="portal-input" type="text" maxlength="250" value="${escapeHtml(item ? item.uraian : "")}" placeholder="Keterangan transaksi" required>
@@ -3943,6 +3955,8 @@ async function openPublicFinanceReport(tahunAjaran = "") {
     compactUI.financePublic.monthly = res.monthly || [];
     compactUI.financePublic.years = res.availableYears || [];
     compactUI.financePublic.tahunAjaran = res.tahunAjaran || "";
+    compactUI.financePublic.cashflowCurrentPeriod = res.cashflowCurrentPeriod || "";
+    compactUI.financePublic.cashflowCurrentPeriodLabel = res.cashflowCurrentPeriodLabel || kasPeriodLabelClient(res.cashflowCurrentPeriod || "");
     compactUI.financePublic.page = 1;
     renderPublicFinanceReport();
   } catch (err) {
@@ -3979,14 +3993,14 @@ function renderPublicFinanceReport() {
     <select class="portal-select full" onchange="changePublicFinanceYear(this.value)">${yearOptions}</select>
 
     <div class="public-finance-balance">
-      <small>Saldo Saat Ini</small><strong>${formatRupiah(s.saldo || 0)}</strong><span>${escapeHtml(f.tahunAjaran || "-")}</span>
+      <small>Saldo Tahun Ajaran</small><strong>${formatRupiah(s.saldo || 0)}</strong><span>${escapeHtml(f.tahunAjaran || "-")}</span>
     </div>
 
     <div class="public-finance-grid">
       <div><small>Total Pemasukan</small><strong>${formatRupiah(s.totalPemasukan || 0)}</strong></div>
       <div><small>Total Pengeluaran</small><strong>${formatRupiah(s.totalPengeluaran || 0)}</strong></div>
-      <div><small>Masuk Bulan Ini</small><strong>${formatRupiah(s.pemasukanBulanIni || 0)}</strong></div>
-      <div><small>Keluar Bulan Ini</small><strong>${formatRupiah(s.pengeluaranBulanIni || 0)}</strong></div>
+      <div><small>Masuk ${escapeHtml(f.cashflowCurrentPeriodLabel || "Bulan Ini")}</small><strong>${formatRupiah(s.pemasukanBulanIni || 0)}</strong></div>
+      <div><small>Keluar ${escapeHtml(f.cashflowCurrentPeriodLabel || "Bulan Ini")}</small><strong>${formatRupiah(s.pengeluaranBulanIni || 0)}</strong></div>
     </div>
 
     <div class="public-finance-note">Laporan ini hanya menampilkan angka umum. Data pembayaran tiap guru dan data internal Bendahara tidak ditampilkan.</div>
