@@ -3329,3 +3329,14 @@ button:disabled {
     justify-content: flex-start;
   }
 }
+
+
+/* =========================================================
+   V1.6.1.4 - DEDICATED SCANNER + QR FALLBACK CODE
+========================================================= */
+.nav-center #qrCenterLabel{display:block;max-width:46px;line-height:1.05;text-align:center;font-size:10px;letter-spacing:-.02em}
+.premium-attendance-code{width:78%;margin:0 auto 9px;padding:8px 10px;border:1px solid rgba(245,212,95,.42);background:rgba(1,31,51,.34);border-radius:13px;text-align:center}
+.premium-attendance-code small{display:block;color:rgba(255,255,255,.58);font-size:6.5px;letter-spacing:.18em;margin-bottom:3px}
+.premium-attendance-code strong{display:inline-block;color:#f7da6c;font-size:11px;letter-spacing:.08em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.premium-attendance-code button{margin-left:7px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.09);color:#fff;border-radius:999px;padding:4px 8px;font-size:7px;font-weight:800;cursor:pointer}
+.qr-manual-code-input{text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.05em}
