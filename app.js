@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.6.1.3
+   PORTAL KOM 3 - FRONTEND V1.6.1.5
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -107,6 +107,13 @@
    - Scanner dipisahkan dari modul Kehadiran
    - Kartu menampilkan Kode Absensi cadangan untuk input manual bila QR gagal dibaca
 
+   PATCH V1.6.1.5:
+   - Kamera diminta lebih dahulu agar izin browser benar-benar muncul
+   - Native BarcodeDetector tetap dipakai bila tersedia
+   - Fallback jsQR otomatis untuk Chrome desktop, Safari/iPhone, dan browser tanpa BarcodeDetector
+   - Pesan error kamera dibedakan: izin ditolak, kamera tidak ada, kamera sedang dipakai, atau konteks tidak aman
+   - Kode Absensi Manual V1.6.1.4 tetap menjadi fallback terakhir
+
    TAMBAHAN V1.6.1.3:
    - Kartu Digital universal untuk semua user aktif
    - Scanner QR tetap terpisah untuk petugas berwenang
@@ -161,7 +168,8 @@ const compactUI = {
   },
   financePublic: { summary: null, monthly: [], years: [], tahunAjaran: "", page: 1 },
   qr: {
-    card: null, stream: null, detector: null, scanning: false, lastPayload: "",
+    card: null, stream: null, detector: null, detectorMode: "", scannerCanvas: null, scannerContext: null,
+    scanning: false, frameBusy: false, lastFrameAt: 0, lastPayload: "",
     soundEnabled: localStorage.getItem("kom3_scan_sound") !== "off"
   },
   bank: {
@@ -181,6 +189,7 @@ const compactUI = {
 };
 
 let scanAudioContext = null;
+let qrFallbackLoadPromise = null;
 let portalWarmupStarted = false;
 let pendingRegisterPhoto = null;
 let pendingProfilePhoto = null;
@@ -4305,49 +4314,257 @@ function renderQrAttendanceScanner(agenda) {
 
 async function startQrScanner() {
   unlockScanAudio();
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showToast("Browser ini tidak mendukung akses kamera. Gunakan input kode manual atau absensi manual.");
+
+  if (!window.isSecureContext) {
+    showToast("Akses kamera membutuhkan koneksi HTTPS. Buka Portal melalui alamat GitHub Pages https://.");
     return;
   }
-  if (!("BarcodeDetector" in window)) {
-    showToast("Scanner QR otomatis belum didukung browser ini. Gunakan Chrome Android terbaru atau input kode manual.");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast("Browser ini tidak menyediakan akses kamera. Gunakan browser terbaru atau Kode Absensi Manual.");
     return;
   }
 
   stopQrScanner();
+  setQrScannerStatus_("Meminta izin kamera...");
+  setQrStartButtonState_(true, "Membuka kamera...");
+
   try {
-    compactUI.qr.detector = new BarcodeDetector({ formats: ["qr_code"] });
-    compactUI.qr.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    // V1.6.1.5: minta kamera TERLEBIH DAHULU. Dengan begitu prompt izin
+    // tetap muncul meski browser tidak memiliki BarcodeDetector native.
+    compactUI.qr.stream = await openQrCameraStream_();
+
     const video = document.getElementById("qrScannerVideo");
-    if (!video) { stopQrScanner(); return; }
+    if (!video) {
+      stopQrScanner();
+      return;
+    }
     video.srcObject = compactUI.qr.stream;
+    video.muted = true;
+    video.setAttribute("playsinline", "");
     await video.play();
+
+    const decoderReady = await prepareQrDecoder_();
+    if (!decoderReady) {
+      stopQrScanner();
+      setQrScannerStatus_("Kamera tersedia, tetapi mesin pembaca QR gagal dimuat. Gunakan Kode Absensi Manual.", "scan-error");
+      showToast("Mesin pembaca QR tidak dapat dimuat. Periksa koneksi internet atau gunakan Kode Absensi Manual.");
+      return;
+    }
+
     compactUI.qr.scanning = true;
-    const status = document.getElementById("qrScannerStatus"); if (status) status.textContent = "Arahkan kamera ke QR anggota";
+    compactUI.qr.frameBusy = false;
+    compactUI.qr.lastFrameAt = 0;
+    const modeLabel = compactUI.qr.detectorMode === "native" ? "scanner native" : "mode kompatibel";
+    setQrScannerStatus_(`Arahkan kamera ke QR anggota • ${modeLabel}`);
+    setQrStartButtonState_(false, "Kamera Aktif");
     scanQrFrame();
   } catch (err) {
     stopQrScanner();
-    showToast("Kamera tidak dapat dibuka. Pastikan izin kamera diberikan.");
+    setQrStartButtonState_(false, "Mulai Kamera");
+    const message = qrCameraErrorMessage_(err);
+    setQrScannerStatus_(message, "scan-error");
+    showToast(message);
   }
+}
+
+async function openQrCameraStream_() {
+  const preferred = {
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  };
+
+  try {
+    return await navigator.mediaDevices.getUserMedia(preferred);
+  } catch (err) {
+    // Sebagian browser/laptop lama menolak constraint kamera belakang.
+    // Retry hanya untuk masalah constraint; penolakan izin tidak diulang.
+    if (err && (err.name === "OverconstrainedError" || err.name === "ConstraintNotSatisfiedError")) {
+      return await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+    throw err;
+  }
+}
+
+async function prepareQrDecoder_() {
+  compactUI.qr.detector = null;
+  compactUI.qr.detectorMode = "";
+
+  if ("BarcodeDetector" in window) {
+    try {
+      let supportsQr = true;
+      if (typeof BarcodeDetector.getSupportedFormats === "function") {
+        const formats = await BarcodeDetector.getSupportedFormats();
+        supportsQr = Array.isArray(formats) && formats.includes("qr_code");
+      }
+      if (supportsQr) {
+        compactUI.qr.detector = new BarcodeDetector({ formats: ["qr_code"] });
+        compactUI.qr.detectorMode = "native";
+        return true;
+      }
+    } catch (e) {
+      compactUI.qr.detector = null;
+    }
+  }
+
+  const fallbackReady = await ensureJsQrDecoderLoaded_();
+  if (!fallbackReady) return false;
+
+  compactUI.qr.detectorMode = "jsqr";
+  compactUI.qr.scannerCanvas = document.createElement("canvas");
+  compactUI.qr.scannerContext = compactUI.qr.scannerCanvas.getContext("2d", { willReadFrequently: true });
+  return !!compactUI.qr.scannerContext;
+}
+
+async function ensureJsQrDecoderLoaded_() {
+  if (typeof window.jsQR === "function") return true;
+  if (qrFallbackLoadPromise) return qrFallbackLoadPromise;
+
+  qrFallbackLoadPromise = (async () => {
+    const sources = [
+      "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js",
+      "https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"
+    ];
+
+    for (const src of sources) {
+      try {
+        await loadQrDecoderScript_(src);
+        if (typeof window.jsQR === "function") return true;
+      } catch (e) {}
+    }
+    return false;
+  })();
+
+  const result = await qrFallbackLoadPromise;
+  if (!result) qrFallbackLoadPromise = null;
+  return result;
+}
+
+function loadQrDecoderScript_(src) {
+  return new Promise((resolve, reject) => {
+    if (typeof window.jsQR === "function") { resolve(); return; }
+
+    // Bersihkan percobaan lama yang mungkin sudah gagal/selesai agar retry tidak menggantung.
+    const old = Array.from(document.querySelectorAll("script[data-kom3-jsqr]")).find(el => el.dataset.kom3Jsqr === src);
+    if (old) old.remove();
+
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.defer = true;
+    script.dataset.kom3Jsqr = src;
+    script.onload = () => resolve();
+    script.onerror = () => { script.remove(); reject(new Error("Decoder gagal dimuat.")); };
+    document.head.appendChild(script);
+  });
 }
 
 async function scanQrFrame() {
   if (!compactUI.qr.scanning) return;
+
   const video = document.getElementById("qrScannerVideo");
-  if (!video || video.readyState < 2) { requestAnimationFrame(scanQrFrame); return; }
+  if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+    requestAnimationFrame(scanQrFrame);
+    return;
+  }
+
+  // jsQR melakukan pembacaan piksel CPU-side. Batasi sekitar 7-8 fps agar
+  // tetap ringan pada laptop/HP menengah tanpa mengurangi respons scanner.
+  const now = performance.now();
+  const minGap = compactUI.qr.detectorMode === "jsqr" ? 130 : 45;
+  if (compactUI.qr.frameBusy || now - compactUI.qr.lastFrameAt < minGap) {
+    requestAnimationFrame(scanQrFrame);
+    return;
+  }
+
+  compactUI.qr.frameBusy = true;
+  compactUI.qr.lastFrameAt = now;
   try {
-    const codes = await compactUI.qr.detector.detect(video);
-    if (codes && codes.length && codes[0].rawValue) {
-      const payload = codes[0].rawValue;
-      if (payload !== compactUI.qr.lastPayload) {
-        compactUI.qr.lastPayload = payload;
-        compactUI.qr.scanning = false;
-        await processQrAttendancePayload(payload);
-        return;
+    const payload = await detectQrPayloadFromVideo_(video);
+    if (payload && payload !== compactUI.qr.lastPayload) {
+      compactUI.qr.lastPayload = payload;
+      compactUI.qr.scanning = false;
+      await processQrAttendancePayload(payload);
+      return;
+    }
+  } catch (e) {
+    // Bila native detector tersedia tetapi bermasalah saat runtime,
+    // pindah otomatis ke jsQR tanpa menutup kamera.
+    if (compactUI.qr.detectorMode === "native") {
+      const fallbackReady = await ensureJsQrDecoderLoaded_();
+      if (fallbackReady) {
+        compactUI.qr.detector = null;
+        compactUI.qr.detectorMode = "jsqr";
+        compactUI.qr.scannerCanvas = document.createElement("canvas");
+        compactUI.qr.scannerContext = compactUI.qr.scannerCanvas.getContext("2d", { willReadFrequently: true });
+        setQrScannerStatus_("Arahkan kamera ke QR anggota • mode kompatibel");
       }
     }
-  } catch (e) {}
-  requestAnimationFrame(scanQrFrame);
+  } finally {
+    compactUI.qr.frameBusy = false;
+  }
+
+  if (compactUI.qr.scanning) requestAnimationFrame(scanQrFrame);
+}
+
+async function detectQrPayloadFromVideo_(video) {
+  if (compactUI.qr.detectorMode === "native" && compactUI.qr.detector) {
+    const codes = await compactUI.qr.detector.detect(video);
+    if (codes && codes.length && codes[0].rawValue) return String(codes[0].rawValue).trim();
+    return "";
+  }
+
+  if (compactUI.qr.detectorMode !== "jsqr" || typeof window.jsQR !== "function") return "";
+  const canvas = compactUI.qr.scannerCanvas;
+  const ctx = compactUI.qr.scannerContext;
+  if (!canvas || !ctx) return "";
+
+  const maxWidth = 900;
+  const scale = Math.min(1, maxWidth / video.videoWidth);
+  const width = Math.max(1, Math.round(video.videoWidth * scale));
+  const height = Math.max(1, Math.round(video.videoHeight * scale));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+
+  ctx.drawImage(video, 0, 0, width, height);
+  const image = ctx.getImageData(0, 0, width, height);
+  const result = window.jsQR(image.data, width, height, { inversionAttempts: "attemptBoth" });
+  return result && result.data ? String(result.data).trim() : "";
+}
+
+function qrCameraErrorMessage_(err) {
+  const name = String((err && err.name) || "");
+  if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
+    return "Izin kamera ditolak/diblokir. Buka izin situs (ikon gembok/setting di address bar), pilih Camera = Allow, lalu coba lagi.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "Kamera tidak ditemukan pada perangkat ini. Gunakan Kode Absensi Manual.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
+    return "Kamera tidak dapat dipakai. Tutup aplikasi lain yang sedang menggunakan kamera, lalu coba lagi.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return "Kamera tersedia tetapi pengaturan kamera tidak kompatibel. Coba refresh browser atau gunakan Kode Absensi Manual.";
+  }
+  return "Kamera belum dapat dibuka. Periksa izin kamera browser lalu coba kembali.";
+}
+
+function setQrScannerStatus_(message, className = "") {
+  const status = document.getElementById("qrScannerStatus");
+  if (!status) return;
+  status.textContent = message || "";
+  status.classList.remove("scan-success", "scan-warning", "scan-error");
+  if (className) status.classList.add(className);
+}
+
+function setQrStartButtonState_(loading, label) {
+  const btn = document.getElementById("qrStartButton");
+  if (!btn) return;
+  btn.disabled = !!loading;
+  btn.textContent = loading ? `⏳ ${label || "Membuka kamera..."}` : `📷 ${label || "MULAI KAMERA"}`;
 }
 
 async function processQrAttendancePayload(payload) {
@@ -4479,11 +4696,16 @@ async function submitManualQrAttendance() {
 
 function stopQrScanner() {
   compactUI.qr.scanning = false;
+  compactUI.qr.frameBusy = false;
+  compactUI.qr.lastFrameAt = 0;
   if (compactUI.qr.stream) {
     compactUI.qr.stream.getTracks().forEach(track => track.stop());
     compactUI.qr.stream = null;
   }
   compactUI.qr.detector = null;
+  compactUI.qr.detectorMode = "";
+  compactUI.qr.scannerCanvas = null;
+  compactUI.qr.scannerContext = null;
   compactUI.qr.lastPayload = "";
 }
 
