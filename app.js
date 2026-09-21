@@ -185,6 +185,11 @@ const compactUI = {
     practiceTab: "BANK", practicePage: 1, practiceMyPage: 1,
     practiceReviewPage: 1, practiceReviewStatus: "MENUNGGU"
   },
+  cert: {
+    mine: [], managed: [], years: [], isManager: false, tab: "MY", page: 1, managePage: 1, manageStatus: "ALL", year: "ALL",
+    sources: null, settings: null, participants: [], signatureUpload: null, stampUpload: null,
+    issue: { kind: "PESERTA_HBG", sourceId: "", recipientId: "", recipientUserIds: [], template: "GOLD", status: "TERBIT", tanggalTerbit: "", redaksi: "", catatan: "", useSignature: true, useStamp: true }
+  },
   portalSettings: null
 };
 
@@ -206,7 +211,7 @@ let profilePhotoLoadPromise = null;
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v1613_cache_";
+const API_CACHE_PREFIX = "kom3_v17_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -232,7 +237,9 @@ const API_READ_TTL = {
   myDigitalCard: 300000,
   getMyProfilePhoto: 300000,
   qrAttendanceContext: 15000,
-  listLearningResources: 45000
+  listLearningResources: 45000,
+  listCertificates: 20000,
+  certificateSources: 30000
 };
 
 const API_MUTATION_ACTIONS = new Set([
@@ -247,7 +254,8 @@ const API_MUTATION_ACTIONS = new Set([
   "resetPasswordWithOtp", "updateProfilePhoto",
   "submitLearningResource", "reviewLearningResource", "setLearningResourceStatus",
   "saveHbgProgram", "setHbgProgramStatus",
-  "submitPracticeContribution", "reviewPracticeContribution", "setPracticeContributionStatus"
+  "submitPracticeContribution", "reviewPracticeContribution", "setPracticeContributionStatus",
+  "issueCertificates", "setCertificateStatus", "saveCertificateSettings"
 ]);
 
 const apiMemoryCache = new Map();
@@ -5739,6 +5747,360 @@ function changeHbgParticipantPage(page) { compactUI.hbg.participantPage = Number
    FEATURE ROUTER
 ========================================================= */
 
+
+
+/* =========================================================
+   V1.7 - SERTIFIKAT DIGITAL
+========================================================= */
+
+async function openCertificateCenter(tab = "MY") {
+  showLoadingModal("Sertifikat Digital");
+  try {
+    const res = await apiRequest("listCertificates", { token: sessionToken });
+    if (!res.success) throw new Error(res.message || "Sertifikat belum dapat dimuat.");
+    compactUI.cert.mine = res.mine || [];
+    compactUI.cert.managed = res.managed || [];
+    compactUI.cert.years = res.years || [];
+    compactUI.cert.isManager = !!res.isManager;
+    compactUI.cert.tab = (!res.isManager && tab !== "MY") ? "MY" : tab;
+    compactUI.cert.page = 1;
+    compactUI.cert.managePage = 1;
+    if (!compactUI.cert.issue.tanggalTerbit) compactUI.cert.issue.tanggalTerbit = localDateInputValue();
+    if (compactUI.cert.isManager && (tab === "ISSUE" || tab === "SETTINGS")) await ensureCertificateTabData_(tab);
+    renderCertificateCenter();
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+async function ensureCertificateTabData_(tab) {
+  if (tab === "ISSUE" && !compactUI.cert.sources) {
+    const res = await apiRequest("certificateSources", { token: sessionToken });
+    if (!res.success) throw new Error(res.message || "Sumber sertifikat belum dapat dimuat.");
+    compactUI.cert.sources = res;
+    const d = res.defaults || {};
+    compactUI.cert.issue.template = d.defaultTemplate || "GOLD";
+    compactUI.cert.issue.useSignature = !!d.signatureAvailable;
+    compactUI.cert.issue.useStamp = !!d.stampAvailable;
+    certificateIssueResetSource_();
+  }
+  if (tab === "SETTINGS") {
+    const res = await apiRequest("certificateSettings", { token: sessionToken });
+    if (!res.success) throw new Error(res.message || "Pengaturan sertifikat belum dapat dimuat.");
+    compactUI.cert.settings = res.settings || {};
+    compactUI.cert.signatureUpload = null;
+    compactUI.cert.stampUpload = null;
+  }
+}
+
+async function setCertificateTab(tab) {
+  if (!compactUI.cert.isManager && tab !== "MY") return;
+  compactUI.cert.tab = tab;
+  try { await ensureCertificateTabData_(tab); renderCertificateCenter(); }
+  catch (err) { showToast(err.message); }
+}
+
+function renderCertificateCenter() {
+  const c = compactUI.cert;
+  let content = "";
+  if (c.tab === "ISSUE" && c.isManager) content = renderCertificateIssueTab_();
+  else if (c.tab === "MANAGE" && c.isManager) content = renderCertificateManageTab_();
+  else if (c.tab === "SETTINGS" && c.isManager) content = renderCertificateSettingsTab_();
+  else content = renderCertificateMineTab_();
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="certificate-hero"><div class="certificate-hero-icon">🏆</div><div><small>V1.7 • SERTIFIKAT DIGITAL</small><h3>Sertifikat KOM 3</h3><p>Terbit, simpan PDF, dan verifikasi sertifikat dengan QR.</p></div></div>
+    <div class="compact-tabs certificate-tabs">
+      ${compactTabButton("Sertifikat Saya", "MY", c.tab, c.mine.length, "setCertificateTab")}
+      ${c.isManager ? compactTabButton("Terbitkan", "ISSUE", c.tab, "", "setCertificateTab") : ""}
+      ${c.isManager ? compactTabButton("Kelola", "MANAGE", c.tab, c.managed.length, "setCertificateTab") : ""}
+      ${c.isManager ? compactTabButton("Pengaturan", "SETTINGS", c.tab, "", "setCertificateTab") : ""}
+    </div>
+    ${content}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function renderCertificateMineTab_() {
+  const c = compactUI.cert;
+  const all = c.mine || [];
+  const totalPages = Math.max(1, Math.ceil(all.length / COMPACT_PAGE_SIZE));
+  c.page = Math.min(Math.max(1, c.page || 1), totalPages);
+  const rows = all.slice((c.page - 1) * COMPACT_PAGE_SIZE, c.page * COMPACT_PAGE_SIZE);
+  if (!rows.length) return `<div class="empty-panel">Belum ada sertifikat yang diterbitkan untuk akun ini.</div>`;
+  return `<div class="certificate-list">${rows.map(x => certificateCardHtml_(x, false)).join("")}</div>${compactPagerHtml(c.page, totalPages, "changeCertificateMinePage")}`;
+}
+
+function changeCertificateMinePage(page) { compactUI.cert.page = Number(page || 1); renderCertificateCenter(); }
+function changeCertificateManagePage(page) { compactUI.cert.managePage = Number(page || 1); renderCertificateCenter(); }
+
+function certificateCardHtml_(item, managerMode) {
+  const cancelled = String(item.status).toUpperCase() === "DIBATALKAN";
+  const draft = String(item.status).toUpperCase() === "DRAFT";
+  return `<article class="certificate-list-card ${cancelled ? "is-cancelled" : ""}">
+    <div class="certificate-list-icon">${item.jenis === "NARASUMBER" ? "🎤" : item.jenis === "KONTRIBUTOR" ? "💡" : "🏆"}</div>
+    <div class="certificate-list-main"><small>${escapeHtml(item.tahunAjaran || "-")} • ${escapeHtml(item.peran || item.jenis || "Sertifikat")}</small><strong>${escapeHtml(item.namaKegiatan || "Sertifikat KOM 3")}</strong><span>${escapeHtml(item.nomor || "Belum bernomor • DRAFT")}</span>${managerMode ? `<em>${escapeHtml(item.nama || "-")} • ${escapeHtml(item.sekolah || "-")}</em>` : ""}</div>
+    <span class="status-pill ${cancelled ? "rejected" : draft ? "pending" : "approved"}">${escapeHtml(item.status)}</span>
+    <div class="certificate-list-actions"><button class="archive-open-button" type="button" onclick="openCertificateDocument('${escapeJs(item.id)}')">${draft ? "Preview" : "Lihat / PDF"}</button>${managerMode && draft ? `<button class="bank-review-button approve" type="button" onclick="changeCertificateStatus('${escapeJs(item.id)}','TERBIT')">Terbitkan</button>` : ""}${managerMode && !draft && !cancelled ? `<button class="bank-review-button reject" type="button" onclick="changeCertificateStatus('${escapeJs(item.id)}','DIBATALKAN')">Batalkan</button>` : ""}${managerMode && cancelled ? `<button class="bank-review-button approve" type="button" onclick="changeCertificateStatus('${escapeJs(item.id)}','TERBIT')">Aktifkan</button>` : ""}</div>
+  </article>`;
+}
+
+function renderCertificateManageTab_() {
+  const c = compactUI.cert;
+  const filtered = (c.managed || []).filter(x => (c.manageStatus === "ALL" || x.status === c.manageStatus) && (c.year === "ALL" || x.tahunAjaran === c.year));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / COMPACT_PAGE_SIZE));
+  c.managePage = Math.min(Math.max(1, c.managePage || 1), totalPages);
+  const rows = filtered.slice((c.managePage - 1) * COMPACT_PAGE_SIZE, c.managePage * COMPACT_PAGE_SIZE);
+  const yearOptions = [`<option value="ALL">Semua Tahun</option>`].concat((c.years || []).map(y => `<option value="${escapeHtml(y)}" ${c.year === y ? "selected" : ""}>${escapeHtml(y)}</option>`)).join("");
+  return `<div class="compact-filter-grid"><select class="portal-select full" onchange="compactUI.cert.manageStatus=this.value;compactUI.cert.managePage=1;renderCertificateCenter()"><option value="ALL">Semua Status</option><option value="DRAFT" ${c.manageStatus === "DRAFT" ? "selected" : ""}>Draft</option><option value="TERBIT" ${c.manageStatus === "TERBIT" ? "selected" : ""}>Terbit</option><option value="DIBATALKAN" ${c.manageStatus === "DIBATALKAN" ? "selected" : ""}>Dibatalkan</option></select><select class="portal-select full" onchange="compactUI.cert.year=this.value;compactUI.cert.managePage=1;renderCertificateCenter()">${yearOptions}</select></div><div class="certificate-list">${rows.length ? rows.map(x => certificateCardHtml_(x, true)).join("") : `<div class="empty-panel">Tidak ada sertifikat pada filter ini.</div>`}</div>${compactPagerHtml(c.managePage, totalPages, "changeCertificateManagePage")}`;
+}
+
+function certificateIssueResetSource_() {
+  const i = compactUI.cert.issue;
+  const src = compactUI.cert.sources || {};
+  i.sourceId = ""; i.recipientId = ""; i.recipientUserIds = []; compactUI.cert.participants = [];
+  if (i.kind === "PESERTA_HBG" || i.kind === "NARASUMBER_HBG") {
+    if ((src.hbg || []).length) i.sourceId = src.hbg[0].id;
+  } else if ((src.practices || []).length) i.sourceId = src.practices[0].id;
+  certificateSyncIssueDefaults_();
+}
+
+function certificateIssueKindChanged(value) { compactUI.cert.issue.kind = value; certificateIssueResetSource_(); renderCertificateCenter(); }
+function certificateIssueSourceChanged(value) { compactUI.cert.issue.sourceId = value; compactUI.cert.issue.recipientUserIds = []; compactUI.cert.participants = []; certificateSyncIssueDefaults_(); renderCertificateCenter(); }
+function certificateIssueField(field, value) { compactUI.cert.issue[field] = value; }
+function certificateIssueToggle(field, checked) { compactUI.cert.issue[field] = !!checked; }
+
+function certificateCurrentSource_() {
+  const c = compactUI.cert, i = c.issue, src = c.sources || {};
+  if (i.kind === "KONTRIBUTOR_PB") return (src.practices || []).find(x => x.id === i.sourceId) || null;
+  return (src.hbg || []).find(x => x.id === i.sourceId) || null;
+}
+
+function certificateSyncIssueDefaults_() {
+  const i = compactUI.cert.issue, source = certificateCurrentSource_(), src = compactUI.cert.sources || {};
+  if (!source) { i.redaksi = ""; return; }
+  if (i.kind === "NARASUMBER_HBG") i.recipientId = source.narasumberUserId || "";
+  if (i.kind === "KONTRIBUTOR_PB") i.recipientId = source.userId || "";
+  i.redaksi = certificateDefaultRedaksiClient_(i.kind, source);
+  const d = src.defaults || {};
+  if (!i.template) i.template = d.defaultTemplate || "GOLD";
+}
+
+function certificateDefaultRedaksiClient_(kind, source) {
+  if (!source) return "";
+  const ta = source.tahunAjaran ? ` Tahun Ajaran ${source.tahunAjaran}.` : ".";
+  if (kind === "PESERTA_HBG") return `Atas partisipasinya sebagai Peserta pada kegiatan ${source.namaKegiatan || "Hari Belajar Guru"} MGMP Bahasa Inggris SMP Komisariat 3 Kabupaten Ciamis,${ta}`;
+  if (kind === "NARASUMBER_HBG") return `Atas kontribusinya sebagai Narasumber pada kegiatan ${source.namaKegiatan || "Hari Belajar Guru"}${source.judulPraktikBaik ? ` dengan materi/praktik baik “${source.judulPraktikBaik}”` : ""},${ta}`;
+  return `Atas kontribusinya sebagai Kontributor Praktik Baik melalui Portal KOM 3${source.judul ? ` dengan karya “${source.judul}”` : ""},${ta}`;
+}
+
+function certificateSourceOptions_() {
+  const i = compactUI.cert.issue, src = compactUI.cert.sources || {};
+  const items = i.kind === "KONTRIBUTOR_PB" ? (src.practices || []) : (src.hbg || []);
+  return items.length ? items.map(x => `<option value="${escapeHtml(x.id)}" ${i.sourceId === x.id ? "selected" : ""}>${escapeHtml((x.namaKegiatan || "Praktik Baik") + " • " + (x.judulPraktikBaik || x.judul || x.tanggal || ""))}</option>`).join("") : `<option value="">Belum ada sumber yang memenuhi syarat</option>`;
+}
+
+function renderCertificateIssueTab_() {
+  const c = compactUI.cert, i = c.issue, src = c.sources || {}, d = src.defaults || {}, source = certificateCurrentSource_();
+  const users = src.users || [];
+  let recipients = "";
+  if (i.kind === "PESERTA_HBG") {
+    recipients = `<div class="certificate-recipient-box"><div class="section-mini-title">Peserta berstatus HADIR</div>${compactUI.cert.participants.length ? `<label class="certificate-check-all"><input type="checkbox" onchange="toggleAllCertificateParticipants(this.checked)"> Pilih semua peserta HADIR</label><div class="certificate-participant-list">${compactUI.cert.participants.map(p => `<label class="certificate-participant-row ${p.status !== "HADIR" ? "disabled" : ""}"><input type="checkbox" ${p.status !== "HADIR" ? "disabled" : ""} ${i.recipientUserIds.includes(p.userId) ? "checked" : ""} onchange="toggleCertificateParticipant('${escapeJs(p.userId)}',this.checked)"><span><b>${escapeHtml(p.nama)}</b><small>${escapeHtml(p.sekolah)} • ${escapeHtml(p.status)}</small></span></label>`).join("")}</div>` : `<button class="secondary-button" type="button" onclick="loadCertificateParticipants()">👥 MUAT PESERTA DARI ABSENSI</button><div class="file-note">Hanya peserta dengan status HADIR yang dapat dipilih.</div>`}</div>`;
+  } else if (i.kind === "NARASUMBER_HBG") {
+    recipients = `<label class="modal-label">Akun Narasumber</label><select class="portal-select full" onchange="certificateIssueField('recipientId',this.value)"><option value="">Pilih guru...</option>${users.map(u => `<option value="${escapeHtml(u.id)}" ${i.recipientId === u.id ? "selected" : ""}>${escapeHtml(u.nama)} • ${escapeHtml(u.sekolah)}</option>`).join("")}</select><div class="file-note">Dipilih otomatis jika narasumber pada HBG sudah terhubung ke akun Portal.</div>`;
+  } else {
+    const u = users.find(x => x.id === i.recipientId);
+    recipients = `<div class="certificate-fixed-recipient"><small>Penerima</small><strong>${escapeHtml(u ? u.nama : (source ? source.namaGuru : "-"))}</strong><span>${escapeHtml(u ? u.sekolah : (source ? source.sekolah : "-"))}</span></div>`;
+  }
+  return `<form class="manager-form compact-form" onsubmit="submitCertificateIssue(event)">
+    <div class="certificate-issue-note">Sertifikat peserta mengambil data dari ABSENSI HBG. Narasumber dan kontributor mengambil data dari modul yang sudah ada.</div>
+    <label class="modal-label">Jenis Sertifikat</label><select class="portal-select full" onchange="certificateIssueKindChanged(this.value)"><option value="PESERTA_HBG" ${i.kind === "PESERTA_HBG" ? "selected" : ""}>Peserta Hari Belajar Guru</option><option value="NARASUMBER_HBG" ${i.kind === "NARASUMBER_HBG" ? "selected" : ""}>Narasumber Hari Belajar Guru</option><option value="KONTRIBUTOR_PB" ${i.kind === "KONTRIBUTOR_PB" ? "selected" : ""}>Kontributor Praktik Baik</option></select>
+    <label class="modal-label">Sumber Kegiatan / Praktik Baik</label><select class="portal-select full" onchange="certificateIssueSourceChanged(this.value)">${certificateSourceOptions_()}</select>
+    ${recipients}
+    <div class="form-grid-2"><div><label class="modal-label">Template</label><select class="portal-select full" onchange="certificateIssueField('template',this.value)"><option value="GOLD" ${i.template === "GOLD" ? "selected" : ""}>A — Gold Premium</option><option value="BLUE" ${i.template === "BLUE" ? "selected" : ""}>B — Blue Professional</option><option value="MINIMAL" ${i.template === "MINIMAL" ? "selected" : ""}>C — Elegant Minimal</option></select></div><div><label class="modal-label">Status Awal</label><select class="portal-select full" onchange="certificateIssueField('status',this.value)"><option value="TERBIT" ${i.status === "TERBIT" ? "selected" : ""}>Terbit</option><option value="DRAFT" ${i.status === "DRAFT" ? "selected" : ""}>Simpan Draft</option></select></div></div>
+    <label class="modal-label">Tanggal Penerbitan</label><input class="portal-input" type="date" value="${escapeHtml(i.tanggalTerbit || localDateInputValue())}" onchange="certificateIssueField('tanggalTerbit',this.value)" required>
+    <label class="modal-label">Redaksi Sertifikat</label><textarea class="portal-textarea" rows="4" maxlength="1000" oninput="certificateIssueField('redaksi',this.value)">${escapeHtml(i.redaksi || "")}</textarea>
+    <div class="certificate-sign-options"><label><input type="checkbox" ${i.useSignature ? "checked" : ""} ${!d.signatureAvailable ? "disabled" : ""} onchange="certificateIssueToggle('useSignature',this.checked)"> Tanda tangan digital</label><label><input type="checkbox" ${i.useStamp ? "checked" : ""} ${!d.stampAvailable ? "disabled" : ""} onchange="certificateIssueToggle('useStamp',this.checked)"> Stempel MGMP</label></div>
+    ${!d.signatureAvailable || !d.stampAvailable ? `<div class="file-note">Tanda tangan/stempel yang belum tersedia dapat diatur pada tab Pengaturan.</div>` : ""}
+    <label class="modal-label">Catatan Internal <span class="optional-label">opsional</span></label><input class="portal-input" type="text" maxlength="500" value="${escapeHtml(i.catatan || "")}" oninput="certificateIssueField('catatan',this.value)">
+    <div class="certificate-issue-actions"><button class="secondary-button" type="button" onclick="previewCertificateIssue()">👁 Preview Template</button><button id="certificateIssueButton" class="primary-button" type="submit">${i.status === "DRAFT" ? "SIMPAN DRAFT" : "TERBITKAN SERTIFIKAT"}</button></div>
+  </form>`;
+}
+
+async function loadCertificateParticipants() {
+  const sourceId = compactUI.cert.issue.sourceId;
+  if (!sourceId) return showToast("Pilih kegiatan terlebih dahulu.");
+  try {
+    const res = await apiRequest("hbgParticipants", { token: sessionToken, id: sourceId });
+    if (!res.success) throw new Error(res.message || "Peserta tidak dapat dimuat.");
+    compactUI.cert.participants = res.participants || [];
+    compactUI.cert.issue.recipientUserIds = compactUI.cert.participants.filter(x => x.status === "HADIR").map(x => x.userId);
+    renderCertificateCenter();
+  } catch (err) { showToast(err.message); }
+}
+
+function toggleCertificateParticipant(userId, checked) {
+  const arr = compactUI.cert.issue.recipientUserIds || [];
+  if (checked && !arr.includes(userId)) arr.push(userId);
+  if (!checked) compactUI.cert.issue.recipientUserIds = arr.filter(x => x !== userId);
+}
+function toggleAllCertificateParticipants(checked) {
+  compactUI.cert.issue.recipientUserIds = checked ? compactUI.cert.participants.filter(x => x.status === "HADIR").map(x => x.userId) : [];
+  renderCertificateCenter();
+}
+
+async function submitCertificateIssue(event) {
+  event.preventDefault();
+  const i = compactUI.cert.issue;
+  let recipients = i.kind === "PESERTA_HBG" ? (i.recipientUserIds || []) : (i.recipientId ? [i.recipientId] : []);
+  if (!i.sourceId) return showToast("Pilih sumber kegiatan terlebih dahulu.");
+  if (!recipients.length && i.kind !== "KONTRIBUTOR_PB") return showToast("Pilih penerima sertifikat.");
+  setButtonLoading("certificateIssueButton", true, "Memproses...");
+  try {
+    const res = await apiRequest("issueCertificates", { token: sessionToken, kind: i.kind, sourceId: i.sourceId, recipientUserIds: recipients, template: i.template, status: i.status, tanggalTerbit: i.tanggalTerbit || localDateInputValue(), redaksi: i.redaksi, catatan: i.catatan, useSignature: !!i.useSignature, useStamp: !!i.useStamp });
+    showToast(res.message);
+    if (res.success) { compactUI.cert.sources = null; await openCertificateCenter("MANAGE"); }
+  } catch (err) { showToast(err.message); }
+  finally { setButtonLoading("certificateIssueButton", false, i.status === "DRAFT" ? "SIMPAN DRAFT" : "TERBITKAN SERTIFIKAT"); }
+}
+
+async function previewCertificateIssue() {
+  const i = compactUI.cert.issue, source = certificateCurrentSource_(), src = compactUI.cert.sources || {};
+  if (!source) return showToast("Pilih sumber kegiatan terlebih dahulu.");
+  let recipient = null;
+  const users = src.users || [];
+  if (i.kind === "PESERTA_HBG" && i.recipientUserIds.length) recipient = users.find(x => x.id === i.recipientUserIds[0]);
+  else recipient = users.find(x => x.id === i.recipientId);
+  if (!recipient && i.kind === "KONTRIBUTOR_PB") recipient = { nama: source.namaGuru || "Nama Guru", sekolah: source.sekolah || "Sekolah" };
+  if (!recipient) recipient = { nama: "NAMA PENERIMA", sekolah: "SEKOLAH" };
+  let settings = compactUI.cert.settings;
+  if (!settings) {
+    try { const r = await apiRequest("certificateSettings", { token: sessionToken }); if (r.success) settings = compactUI.cert.settings = r.settings || {}; } catch (e) {}
+  }
+  const cert = buildPreviewCertificate_(recipient, source, i, settings || {});
+  openCertificatePrintWindow_(cert, { signatureDataUrl: settings && i.useSignature ? settings.signatureDataUrl || "" : "", stampDataUrl: settings && i.useStamp ? settings.stampDataUrl || "" : "" }, true);
+}
+
+function buildPreviewCertificate_(recipient, source, i, settings) {
+  const kindMap = { PESERTA_HBG:["PESERTA","Peserta"], NARASUMBER_HBG:["NARASUMBER","Narasumber"], KONTRIBUTOR_PB:["KONTRIBUTOR","Kontributor Praktik Baik"] };
+  const k = kindMap[i.kind] || ["PESERTA","Peserta"];
+  return { id:"PREVIEW", nama:recipient.nama, sekolah:recipient.sekolah, jenis:k[0], peran:k[1], namaKegiatan:source.namaKegiatan || "Bank Praktik Baik Portal KOM 3", judul:source.judulPraktikBaik || source.judul || "", tanggalKegiatan:source.tanggal || source.tanggalKirim || "", tahunAjaran:source.tahunAjaran || "", nomor:"DRAFT / PREVIEW", verifyToken:"", template:i.template, status:"DRAFT", tanggalTerbit:formatDateClient_(i.tanggalTerbit), showSignature:!!i.useSignature, showStamp:!!i.useStamp, signerName:settings.signerName || "Penandatangan", signerTitle:settings.signerTitle || "Ketua MGMP", signerIdentity:settings.signerIdentity || "", redaksi:i.redaksi || certificateDefaultRedaksiClient_(i.kind, source) };
+}
+
+async function changeCertificateStatus(id, status) {
+  if (!confirm(status === "DIBATALKAN" ? "Batalkan sertifikat ini? QR verifikasi akan menunjukkan sertifikat tidak aktif." : "Terbitkan/aktifkan sertifikat ini?")) return;
+  try { const res = await apiRequest("setCertificateStatus", { token: sessionToken, id, status }); showToast(res.message); if (res.success) await openCertificateCenter("MANAGE"); }
+  catch (err) { showToast(err.message); }
+}
+
+function renderCertificateSettingsTab_() {
+  const s = compactUI.cert.settings || {};
+  return `<form class="manager-form compact-form" onsubmit="saveCertificateSettings(event)">
+    <div class="certificate-issue-note">Tanda tangan dan stempel disimpan private di Drive Portal dan hanya dipakai saat sertifikat dirender.</div>
+    <label class="modal-label">Nama Penandatangan</label><input id="certSignerName" class="portal-input" type="text" value="${escapeHtml(s.signerName || "")}" required>
+    <div class="form-grid-2"><div><label class="modal-label">Jabatan</label><input id="certSignerTitle" class="portal-input" type="text" value="${escapeHtml(s.signerTitle || "Ketua MGMP")}" required></div><div><label class="modal-label">NIP / Identitas <span class="optional-label">opsional</span></label><input id="certSignerIdentity" class="portal-input" type="text" value="${escapeHtml(s.signerIdentity || "")}"></div></div>
+    <label class="modal-label">Template Default</label><select id="certDefaultTemplate" class="portal-select full"><option value="GOLD" ${s.defaultTemplate === "GOLD" ? "selected" : ""}>A — Gold Premium</option><option value="BLUE" ${s.defaultTemplate === "BLUE" ? "selected" : ""}>B — Blue Professional</option><option value="MINIMAL" ${s.defaultTemplate === "MINIMAL" ? "selected" : ""}>C — Elegant Minimal</option></select>
+    <div class="certificate-asset-grid">
+      <div class="certificate-asset-card"><strong>✍️ Tanda Tangan</strong>${s.signatureDataUrl ? `<img id="certSignaturePreview" src="${s.signatureDataUrl}" alt="Tanda tangan">` : `<div id="certSignaturePreviewEmpty" class="certificate-asset-empty">Belum ada</div>`}<input class="portal-input" type="file" accept="image/png,image/jpeg,image/webp" onchange="prepareCertificateAssetInput('signature',this)"><select id="certSignatureStatus" class="portal-select full"><option value="AKTIF" ${s.signatureStatus === "AKTIF" ? "selected" : ""}>Aktif</option><option value="NONAKTIF" ${s.signatureStatus !== "AKTIF" ? "selected" : ""}>Nonaktif</option></select><label class="asset-remove"><input id="certRemoveSignature" type="checkbox"> Hapus file lama</label></div>
+      <div class="certificate-asset-card"><strong>🔵 Stempel MGMP</strong>${s.stampDataUrl ? `<img id="certStampPreview" src="${s.stampDataUrl}" alt="Stempel">` : `<div id="certStampPreviewEmpty" class="certificate-asset-empty">Belum ada</div>`}<input class="portal-input" type="file" accept="image/png,image/jpeg,image/webp" onchange="prepareCertificateAssetInput('stamp',this)"><select id="certStampStatus" class="portal-select full"><option value="AKTIF" ${s.stampStatus === "AKTIF" ? "selected" : ""}>Aktif</option><option value="NONAKTIF" ${s.stampStatus !== "AKTIF" ? "selected" : ""}>Nonaktif</option></select><label class="asset-remove"><input id="certRemoveStamp" type="checkbox"> Hapus file lama</label></div>
+    </div>
+    <div class="file-note">Disarankan PNG transparan. Maksimal 1,5 MB per file.</div>
+    <button id="certSettingsSaveButton" class="primary-button" type="submit">SIMPAN PENGATURAN SERTIFIKAT</button>
+  </form>`;
+}
+
+async function prepareCertificateAssetInput(type, input) {
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 1500 * 1024) { showToast("Ukuran gambar maksimal 1,5 MB."); input.value = ""; return; }
+  try {
+    const payload = await fileToPayload(file);
+    const dataUrl = `data:${payload.mimeType};base64,${payload.base64}`;
+    if (type === "signature") compactUI.cert.signatureUpload = payload; else compactUI.cert.stampUpload = payload;
+    const id = type === "signature" ? "certSignaturePreview" : "certStampPreview";
+    let img = document.getElementById(id);
+    if (!img) {
+      const empty = document.getElementById(type === "signature" ? "certSignaturePreviewEmpty" : "certStampPreviewEmpty");
+      if (empty) { img = document.createElement("img"); img.id = id; empty.replaceWith(img); }
+    }
+    if (img) img.src = dataUrl;
+  } catch (err) { showToast(err.message); }
+}
+
+async function saveCertificateSettings(event) {
+  event.preventDefault();
+  setButtonLoading("certSettingsSaveButton", true, "Menyimpan...");
+  try {
+    const res = await apiRequest("saveCertificateSettings", { token: sessionToken, signerName:valueOf("certSignerName"), signerTitle:valueOf("certSignerTitle"), signerIdentity:valueOf("certSignerIdentity"), defaultTemplate:document.getElementById("certDefaultTemplate").value, signatureStatus:document.getElementById("certSignatureStatus").value, stampStatus:document.getElementById("certStampStatus").value, signatureFile:compactUI.cert.signatureUpload, stampFile:compactUI.cert.stampUpload, removeSignature:!!document.getElementById("certRemoveSignature").checked, removeStamp:!!document.getElementById("certRemoveStamp").checked });
+    showToast(res.message);
+    if (res.success) { compactUI.cert.settings = null; compactUI.cert.sources = null; await setCertificateTab("SETTINGS"); }
+  } catch (err) { showToast(err.message); }
+  finally { setButtonLoading("certSettingsSaveButton", false, "SIMPAN PENGATURAN SERTIFIKAT"); }
+}
+
+async function openCertificateDocument(id) {
+  const win = window.open("", "_blank");
+  if (!win) return showToast("Popup diblokir browser. Izinkan popup untuk melihat sertifikat.");
+  win.document.write("<p style='font-family:Arial;padding:24px'>Memuat sertifikat...</p>");
+  try {
+    const res = await apiRequest("certificateDetail", { token: sessionToken, id });
+    if (!res.success) throw new Error(res.message || "Sertifikat tidak dapat dibuka.");
+    openCertificatePrintWindow_(res.certificate, res.assets || {}, false, win);
+  } catch (err) { win.close(); showToast(err.message); }
+}
+
+function openCertificatePrintWindow_(cert, assets, preview = false, existingWin = null) {
+  const win = existingWin || window.open("", "_blank");
+  if (!win) return showToast("Popup diblokir browser.");
+  const styleUrl = new URL("style.css?v=1.7", window.location.href).href;
+  const markup = certificateDocumentMarkup_(cert, assets || {}, preview);
+  win.document.open();
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(cert.nomor || "Preview Sertifikat")}</title><link rel="stylesheet" href="${styleUrl}"></head><body class="certificate-print-body"><div class="certificate-print-toolbar"><button onclick="window.print()">🖨️ Cetak / Simpan PDF</button><span>${preview ? "PREVIEW — belum diterbitkan" : "Gunakan Save as PDF untuk menyimpan file."}</span></div>${markup}</body></html>`);
+  win.document.close();
+}
+
+function certificateDocumentMarkup_(cert, assets, preview) {
+  const template = String(cert.template || "GOLD").toLowerCase();
+  const verifyUrl = cert.verifyToken ? `${window.location.origin}${window.location.pathname}?verify=${encodeURIComponent(cert.verifyToken)}` : "";
+  const qr = verifyUrl ? buildQrImageUrl(verifyUrl) : "";
+  const logo = new URL("assets/logo.jpg", window.location.href).href;
+  const invalid = cert.status === "DIBATALKAN" ? "DIBATALKAN" : (preview || cert.status === "DRAFT" ? "DRAFT" : "");
+  return `<main class="certificate-document cert-template-${template}">
+    ${invalid ? `<div class="certificate-watermark">${escapeHtml(invalid)}</div>` : ""}
+    <div class="cert-corner cert-corner-one"></div><div class="cert-corner cert-corner-two"></div>
+    <header class="certificate-doc-head"><img src="${logo}" alt="Logo KOM 3"><div><strong>MGMP BAHASA INGGRIS SMP</strong><b>KOMISARIAT 3</b><span>KABUPATEN CIAMIS</span></div></header>
+    <div class="certificate-doc-kicker">BERKOLABORASI • BERBAGI • BERKEMBANG BERSAMA</div>
+    <h1>SERTIFIKAT</h1><div class="certificate-number">No: ${escapeHtml(cert.nomor || "DRAFT / PREVIEW")}</div>
+    <p class="certificate-given">Diberikan kepada:</p><h2>${escapeHtml(cert.nama || "NAMA PENERIMA")}</h2><p class="certificate-school">${escapeHtml(cert.sekolah || "")}</p>
+    <p class="certificate-as">Sebagai:</p><h3>${escapeHtml(cert.peran || cert.jenis || "Peserta")}</h3>
+    <p class="certificate-wording">${escapeHtml(cert.redaksi || "")}</p>
+    ${cert.judul ? `<p class="certificate-topic">${escapeHtml(cert.judul)}</p>` : ""}
+    <div class="certificate-bottom">
+      <div class="certificate-verify">${qr ? `<img src="${qr}" alt="QR Verifikasi"><div><strong>Verifikasi Sertifikat</strong><span>Scan QR untuk validasi</span><b>${escapeHtml(cert.verifyToken || "PREVIEW")}</b></div>` : `<div class="certificate-preview-badge">PREVIEW</div>`}</div>
+      <div class="certificate-motto">Together for<br><b>Better English Education</b></div>
+      <div class="certificate-signature-area"><span>Ciamis, ${escapeHtml(cert.tanggalTerbit || "-")}</span><strong>${escapeHtml(cert.signerTitle || "Ketua MGMP")}</strong><div class="certificate-signature-stack">${cert.showStamp && assets.stampDataUrl ? `<img class="certificate-stamp-img" src="${assets.stampDataUrl}" alt="Stempel">` : ""}${cert.showSignature && assets.signatureDataUrl ? `<img class="certificate-sign-img" src="${assets.signatureDataUrl}" alt="Tanda tangan">` : ""}</div><b>${escapeHtml(cert.signerName || "Penandatangan")}</b>${cert.signerIdentity ? `<small>${escapeHtml(cert.signerIdentity)}</small>` : ""}</div>
+    </div>
+  </main>`;
+}
+
+function formatDateClient_(iso) {
+  if (!iso) return "-";
+  const d = new Date(`${iso}T12:00:00`);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("id-ID", { day:"numeric", month:"long", year:"numeric" });
+}
+
+async function openPublicCertificateVerification(verifyToken) {
+  if (!verifyToken) return;
+  showLoadingModal("Verifikasi Sertifikat");
+  try {
+    const res = await performApiRequest_("verifyCertificate", { verifyToken });
+    const c = res.certificate || {};
+    const valid = !!res.valid;
+    setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><div class="certificate-verify-result ${valid ? "valid" : "invalid"}"><div class="verify-result-icon">${valid ? "✅" : "⚠️"}</div><h3>${valid ? "SERTIFIKAT VALID" : "SERTIFIKAT TIDAK AKTIF / TIDAK DITEMUKAN"}</h3><p>${escapeHtml(res.message || (valid ? "Sertifikat tercatat resmi pada Portal KOM 3." : "Periksa kembali kode verifikasi."))}</p>${res.success ? `<div class="profile-data-grid"><div><small>NAMA</small><strong>${escapeHtml(c.nama || "-")}</strong></div><div><small>SEKOLAH</small><strong>${escapeHtml(c.sekolah || "-")}</strong></div><div><small>PERAN</small><strong>${escapeHtml(c.peran || "-")}</strong></div><div><small>NOMOR</small><strong>${escapeHtml(c.nomor || "-")}</strong></div><div><small>KEGIATAN</small><strong>${escapeHtml(c.namaKegiatan || "-")}</strong></div><div><small>STATUS</small><strong>${escapeHtml(c.status || "-")}</strong></div></div>` : ""}</div>`);
+  } catch (err) { setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><div class="empty-panel">Verifikasi gagal: ${escapeHtml(err.message)}</div>`); }
+}
+
+
 async function openFeature(name) {
   if (name === "Kehadiran Saya" || name === "Kehadiran") {
     if (currentUser && (currentUser.role === "Admin" || currentUser.role === "Pengurus")) {
@@ -5806,6 +6168,11 @@ async function openFeature(name) {
   if (name === "Keuangan") {
     if (isFinanceManagerClient()) await openFinanceCenter();
     else await openPublicFinanceReport();
+    return;
+  }
+
+  if (name === "Sertifikat Saya" || name === "Sertifikat") {
+    await openCertificateCenter("MY");
     return;
   }
 
@@ -6086,6 +6453,7 @@ function escapeJs(text) {
 ========================================================= */
 
 document.addEventListener("DOMContentLoaded", async () => {
+  const verifyTokenFromUrl = new URLSearchParams(window.location.search).get("verify") || "";
   if (sessionToken) {
     try {
       const stored = localStorage.getItem("kom3_user");
@@ -6103,6 +6471,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (currentUser) {
         showDashboard();
         setupRoleInterface();
+        if (verifyTokenFromUrl) setTimeout(() => openPublicCertificateVerification(verifyTokenFromUrl), 50);
         return;
       }
     } catch (e) {
@@ -6113,4 +6482,5 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   showLogin();
+  if (verifyTokenFromUrl) setTimeout(() => openPublicCertificateVerification(verifyTokenFromUrl), 50);
 });
