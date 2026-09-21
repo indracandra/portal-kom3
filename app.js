@@ -403,11 +403,11 @@ function openForgotPassword() {
     <button class="modal-close" type="button" onclick="closeModal()">×</button>
     <div class="modal-icon">🔐</div>
     <h3>Lupa Password</h3>
-    <p class="modal-subtitle">Masukkan email. Kode OTP akan dikirim ke email yang terdaftar.</p>
+    <p class="modal-subtitle">Masukkan username atau email. Kode OTP akan dikirim ke email yang terdaftar.</p>
 
     <div class="forgot-step-card">
-      <label class="modal-label">Email</label>
-      <input id="forgotIdentifier" class="portal-input" type="email" placeholder="contoh: email@gmail.com" autocomplete="email">
+      <label class="modal-label">Username / Email</label>
+      <input id="forgotIdentifier" class="portal-input" type="text" placeholder="contoh: candra atau email@gmail.com" autocomplete="username">
       <button id="forgotOtpButton" class="primary-button" type="button" onclick="requestPasswordResetOtp()">KIRIM OTP</button>
     </div>
 
@@ -428,7 +428,7 @@ async function requestPasswordResetOtp() {
   const identifier = valueOf("forgotIdentifier");
 
   if (!identifier) {
-    showToast("Masukkan email yang terdaftar.");
+    showToast("Masukkan username atau email.");
     return;
   }
 
@@ -735,6 +735,16 @@ function applyResolvedProfilePhoto_() {
     setAvatarDisplay(
       "profileModalPhotoImg",
       "profileModalInitials",
+      source,
+      currentUser.nama
+    );
+  }
+
+  // V1.4.3.4: sinkronkan foto private yang sama ke Kartu Anggota Digital.
+  if (document.getElementById("digitalCardPhotoImg")) {
+    setAvatarDisplay(
+      "digitalCardPhotoImg",
+      "digitalCardInitials",
       source,
       currentUser.nama
     );
@@ -3984,11 +3994,19 @@ function renderDigitalMemberCard() {
       <div class="premium-gold-line"></div>
       <div class="digital-card-identity premium-card-identity">
         <small>KARTU ANGGOTA DIGITAL</small>
-        <h3>${escapeHtml(card.nama)}</h3>
-        <p>${escapeHtml(card.sekolah)}</p>
-        <div class="digital-card-meta premium-card-meta">
-          <span>${escapeHtml(card.memberId)}</span>
-          <b title="${escapeHtml(card.jabatan || position)}">${escapeHtml(position)}</b>
+        <div class="premium-card-person-row">
+          <div class="premium-card-photo" aria-label="Foto profil anggota">
+            <img id="digitalCardPhotoImg" class="hidden" alt="Foto profil ${escapeHtml(card.nama)}">
+            <span id="digitalCardInitials">-</span>
+          </div>
+          <div class="premium-card-person-copy">
+            <h3>${escapeHtml(card.nama)}</h3>
+            <p>${escapeHtml(card.sekolah)}</p>
+            <div class="digital-card-meta premium-card-meta">
+              <span>${escapeHtml(card.memberId)}</span>
+              <b title="${escapeHtml(card.jabatan || position)}">${escapeHtml(position)}</b>
+            </div>
+          </div>
         </div>
       </div>
       <div class="premium-qr-caption"><span></span><b>QR ATTENDANCE</b><span></span></div>
@@ -4000,6 +4018,15 @@ function renderDigitalMemberCard() {
     <button class="secondary-button" type="button" onclick="rotateDigitalMemberQr()">Perbarui QR Saya</button>
     <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
   `);
+
+  // Gunakan foto private yang sama dengan dashboard/profil; tidak membuat salinan file baru.
+  setAvatarDisplay(
+    "digitalCardPhotoImg",
+    "digitalCardInitials",
+    profilePhotoSourceForUser_(currentUser),
+    card.nama
+  );
+  ensurePrivateProfilePhotoLoaded_().catch(() => {});
 }
 
 function memberCardPositionLabel(card) {
