@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.6.0
+   PORTAL KOM 3 - FRONTEND V1.6.1
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -86,6 +86,14 @@
    - Materi/video memakai link eksternal agar Portal tetap ringan
    - Terhubung ke Agenda/Absensi lama melalui AGENDA_ID
    - Admin/Pengurus dapat melihat daftar peserta dari absensi
+
+   TAMBAHAN V1.6.1:
+   - Jabatan organisasi diperinci sampai Seksi/Humas
+   - Kas multi-periode (tahun ajaran + bulan) untuk Bendahara
+   - Riwayat kas 12 bulan untuk setiap guru ACTIVE
+   - QRIS + transfer hingga 3 rekening bank + tunai
+   - Bendahara dapat menetapkan periode final saat verifikasi
+   - Pemasukan bulanan mengikuti tanggal verifikasi/penerimaan
 ========================================================= */
 
 const APP_CONFIG = {
@@ -123,10 +131,10 @@ const compactUI = {
   leave: { agendas: [], history: [], filter: "ALL", visible: 5 },
   leaveReview: { items: [], tab: "PENDING", query: "", visible: 5 },
   publicAnnouncements: { items: [], visible: 5 },
-  kas: { payments: [], periods: [], currentPeriod: "", currentStatus: "BELUM_BAYAR", visible: 5 },
-  kasReview: { items: [], tab: "MENUNGGU", query: "", visible: 5 },
+  kas: { payments: [], periods: [], years: [], tahunAjaran: "", currentPeriod: "", currentStatus: "BELUM_BAYAR", visible: 5 },
+  kasReview: { items: [], years: [], tab: "MENUNGGU", query: "", visible: 5 },
   finance: {
-    summary: null, ledger: [], members: [], monthly: [], periods: [],
+    summary: null, ledger: [], members: [], monthly: [], periods: [], years: [],
     tahunAjaran: "", period: "", tab: "SUMMARY",
     transactionFilter: "ALL", transactionQuery: "", transactionVisible: 5,
     memberStatus: "BELUM_BAYAR", memberQuery: "", memberVisible: 5,
@@ -207,7 +215,8 @@ const API_MUTATION_ACTIONS = new Set([
   "saveFinanceTransaction", "setFinanceTransactionStatus",
   "rotateMyQrToken", "scanAttendanceQr",
   "resetPasswordWithOtp", "updateProfilePhoto",
-  "submitLearningResource", "reviewLearningResource", "setLearningResourceStatus"
+  "submitLearningResource", "reviewLearningResource", "setLearningResourceStatus",
+  "saveHbgProgram", "setHbgProgramStatus"
 ]);
 
 const apiMemoryCache = new Map();
@@ -428,11 +437,11 @@ function openForgotPassword() {
     <button class="modal-close" type="button" onclick="closeModal()">×</button>
     <div class="modal-icon">🔐</div>
     <h3>Lupa Password</h3>
-    <p class="modal-subtitle">Masukkan username atau email. Kode OTP akan dikirim ke email yang terdaftar.</p>
+    <p class="modal-subtitle">Masukkan email dan kode OTP akan dikirim ke email yang terdaftar.</p>
 
     <div class="forgot-step-card">
-      <label class="modal-label">Username / Email</label>
-      <input id="forgotIdentifier" class="portal-input" type="text" placeholder="contoh: candra atau email@gmail.com" autocomplete="username">
+      <label class="modal-label">Email</label>
+      <input id="forgotIdentifier" class="portal-input" type="email" placeholder="contoh: email@gmail.com" autocomplete="email">
       <button id="forgotOtpButton" class="primary-button" type="button" onclick="requestPasswordResetOtp()">KIRIM OTP</button>
     </div>
 
@@ -453,7 +462,7 @@ async function requestPasswordResetOtp() {
   const identifier = valueOf("forgotIdentifier");
 
   if (!identifier) {
-    showToast("Masukkan username atau email.");
+    showToast("Masukkan email yang terdaftar.");
     return;
   }
 
@@ -1409,11 +1418,20 @@ function jabatanOptions(selected) {
     "Ketua",
     "Sekretaris",
     "Bendahara",
-    "Bidang"
+    "Seksi Pengembangan Kompetensi Pedagogik",
+    "Seksi Pengembangan Kompetensi Sosial",
+    "Seksi Pengembangan Kompetensi Profesional",
+    "Seksi Pengembangan Kompetensi Kepribadian",
+    "Seksi Hubungan Masyarakat"
   ];
 
-  return list
-    .map(x => `<option value="${x}" ${x === selected ? "selected" : ""}>${x}</option>`)
+  const current = String(selected || "").trim();
+  const legacy = current && !list.includes(current)
+    ? `<option value="${escapeHtml(current)}" selected>${escapeHtml(current)} (data lama)</option>`
+    : "";
+
+  return legacy + list
+    .map(x => `<option value="${escapeHtml(x)}" ${x === current ? "selected" : ""}>${escapeHtml(x)}</option>`)
     .join("");
 }
 
@@ -3091,67 +3109,62 @@ async function openPrayerTimes() {
    V1.2.5 - KAS & VERIFIKASI QRIS
 ------------------------- */
 
-async function openKasSaya() {
+async function openKasSaya(tahunAjaran = "") {
   showLoadingModal("Kas Saya");
   try {
-    const res = await apiRequest("kasMySummary", { token: sessionToken });
+    const requestedYear = tahunAjaran || compactUI.kas.tahunAjaran || "";
+    const res = await apiRequest("kasMySummary", { token: sessionToken, tahunAjaran: requestedYear });
     if (!res.success) { showToast(res.message); closeModal(); return; }
 
     compactUI.kas.payments = res.payments || [];
     compactUI.kas.periods = res.periods || [];
+    compactUI.kas.years = res.availableYears || [];
+    compactUI.kas.tahunAjaran = res.tahunAjaran || (res.settings && res.settings.tahunAjaran) || "";
     compactUI.kas.currentPeriod = res.currentPeriod || "";
     compactUI.kas.currentStatus = res.currentStatus || "BELUM_BAYAR";
     compactUI.kas.visible = COMPACT_PAGE_SIZE;
     compactUI.portalSettings = res.settings || {};
     renderKasSayaModal();
-  } catch (err) {
-    showToast(err.message);
-    closeModal();
-  }
+  } catch (err) { showToast(err.message); closeModal(); }
 }
 
 
 function renderKasSayaModal() {
   const s = compactUI.portalSettings || {};
   const qrisActive = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
-  const latestByPeriod = latestKasPaymentsByPeriod(compactUI.kas.payments || []);
-  const history = Object.values(latestByPeriod).sort((a, b) => String(b.periode).localeCompare(String(a.periode)));
+  const banks = (s.bankAccounts || []).filter(x => String(x.status || "AKTIF").toUpperCase() === "AKTIF" && x.bank && x.number);
+  const latestByPeriod = latestKasPaymentsByPeriod((compactUI.kas.payments || []).filter(x => String(x.tahunAjaran || x.tahunAjaranDiajukan || "") === compactUI.kas.tahunAjaran));
+  const periods = compactUI.kas.periods || [];
+  const history = periods.map(p => latestByPeriod[p.value] || ({ id: "", periode: p.value, periodeLabel: p.label, tahunAjaran: compactUI.kas.tahunAjaran, nominal: Number(s.kasMonthly || 5000), status: "BELUM_BAYAR" }));
   const shown = history.slice(0, compactUI.kas.visible);
   const current = latestByPeriod[compactUI.kas.currentPeriod] || null;
   const status = current ? String(current.status || "").toUpperCase() : "BELUM_BAYAR";
-  const hasAvailablePeriod = (compactUI.kas.periods || []).some(p => {
+  const yearOptions = (compactUI.kas.years || [compactUI.kas.tahunAjaran]).map(y => `<option value="${escapeHtml(y)}" ${y === compactUI.kas.tahunAjaran ? "selected" : ""}>${escapeHtml(y)}</option>`).join("");
+  const hasAvailablePeriod = periods.some(p => {
     const item = latestByPeriod[p.value];
     return !item || String(item.status || "").toUpperCase() === "DITOLAK";
   });
 
-  const qrisBox = qrisActive ? `
-    <div class="qris-box compact-qris-box">
-      <div class="qris-title">Bayar dengan QRIS</div>
-      <img src="${escapeHtml(s.qrisImageUrl)}" alt="QRIS Kas KOM 3" class="qris-image compact-qris-image">
-      <strong>${escapeHtml(s.qrisName || "MGMP Komisariat 3")}</strong>
-      <small>Scan dengan aplikasi bank/e-wallet. Pastikan nama penerima sesuai sebelum membayar.</small>
-      <div class="qris-action-row">
-        <button type="button" class="outline-button" onclick="openQrisImage('${escapeJs(s.qrisImageUrl)}')">🔍 Perbesar</button>
-        ${hasAvailablePeriod ? `<button type="button" class="primary-button" onclick="openKasConfirmation()">✓ Saya Sudah Membayar</button>` : ""}
-      </div>
-    </div>` : `<div class="empty-panel">QRIS belum diaktifkan oleh Admin. Hubungi Bendahara untuk informasi pembayaran.</div>`;
-
-  const historyHtml = shown.length
-    ? shown.map(kasHistoryCardHtml).join("")
-    : `<div class="empty-panel">Belum ada riwayat konfirmasi pembayaran.</div>`;
+  let channelHtml = "";
+  if (qrisActive) {
+    channelHtml += `<div class="qris-box compact-qris-box"><div class="qris-title">📱 QRIS</div><img src="${escapeHtml(s.qrisImageUrl)}" alt="QRIS Kas KOM 3" class="qris-image compact-qris-image"><strong>${escapeHtml(s.qrisName || "MGMP Komisariat 3")}</strong><small>Scan dengan aplikasi bank/e-wallet. Pastikan nama penerima sesuai.</small><div class="qris-action-row"><button type="button" class="outline-button" onclick="openQrisImage('${escapeJs(s.qrisImageUrl)}')">🔍 Perbesar</button></div></div>`;
+  }
+  if (banks.length) {
+    channelHtml += `<div class="bank-payment-box"><div class="qris-title">🏦 Transfer Bank</div><div class="bank-account-list">${banks.map(bank => `<div class="bank-account-card"><div><small>${escapeHtml(bank.bank)}</small><strong>${escapeHtml(bank.number)}</strong><span>a.n. ${escapeHtml(bank.holder || "-")}</span></div><button type="button" class="copy-bank-button" onclick="copyTextToClipboard('${escapeJs(bank.number)}')">Salin</button></div>`).join("")}</div></div>`;
+  }
+  if (!channelHtml) channelHtml = `<div class="empty-panel">QRIS/rekening transfer belum diaktifkan. Hubungi Bendahara untuk informasi pembayaran.</div>`;
 
   setModalHtml(`
-    <div class="modal-handle"></div>
-    <button class="modal-close" type="button" onclick="closeModal()">×</button>
-    <div class="modal-title-row">
-      <div class="modal-icon compact">💰</div>
-      <div><h3>Kas Saya</h3><p class="modal-subtitle">Pembayaran kas & verifikasi Bendahara</p></div>
-    </div>
-    <div class="kas-summary-card"><small>Kas Bulanan</small><strong>${formatRupiah(s.kasMonthly || 5000)}</strong><span>Tahun Ajaran ${escapeHtml(s.tahunAjaran || "-")}</span></div>
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="modal-title-row"><div class="modal-icon compact">💰</div><div><h3>Kas Saya</h3><p class="modal-subtitle">Riwayat kas seluruh guru KOM 3</p></div></div>
+    <label class="modal-label">Tahun Ajaran</label><select class="portal-select full" onchange="openKasSaya(this.value)">${yearOptions}</select>
+    <div class="kas-summary-card"><small>Kas Bulanan</small><strong>${formatRupiah(s.kasMonthly || 5000)}</strong><span>Tahun Ajaran ${escapeHtml(compactUI.kas.tahunAjaran || "-")}</span></div>
     ${kasCurrentStatusHtml(status, current)}
-    ${qrisBox}
+    <div class="section-mini-title top-gap">Metode Pembayaran</div>
+    ${channelHtml}
+    ${hasAvailablePeriod ? `<button type="button" class="primary-button kas-confirm-main" onclick="openKasConfirmation()">✓ Saya Sudah Membayar</button>` : ""}
     <div class="section-mini-title top-gap">Riwayat Kas Saya</div>
-    <div class="compact-list">${historyHtml}</div>
+    <div class="compact-list">${shown.map(kasHistoryCardHtml).join("")}</div>
     ${renderLoadMoreButton(history.length > compactUI.kas.visible, "loadMoreKasHistory", "Muat 5 lainnya")}
     <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
   `);
@@ -3161,30 +3174,22 @@ function renderKasSayaModal() {
 function kasCurrentStatusHtml(status, item) {
   const normalized = String(status || "BELUM_BAYAR").toUpperCase();
   const meta = {
-    BELUM_BAYAR: ["Belum Bayar", "Belum ada konfirmasi untuk bulan berjalan.", "kas-status-unpaid", "○"],
-    MENUNGGU: ["Menunggu Verifikasi", "Konfirmasi sudah terkirim. Bendahara akan mencocokkan transaksi QRIS.", "kas-status-pending", "⏳"],
-    LUNAS: ["Lunas", "Pembayaran bulan berjalan sudah diverifikasi.", "kas-status-paid", "✓"],
-    DITOLAK: ["Perlu Diperbaiki", item && item.catatanVerifikasi ? item.catatanVerifikasi : "Konfirmasi ditolak. Silakan cek transaksi lalu kirim ulang.", "kas-status-rejected", "!"]
+    BELUM_BAYAR: ["Belum Bayar", "Belum ada pembayaran LUNAS untuk periode ini.", "kas-status-unpaid", "○"],
+    MENUNGGU: ["Menunggu Verifikasi", "Konfirmasi sudah terkirim dan menunggu pencocokan Bendahara.", "kas-status-pending", "⏳"],
+    LUNAS: ["Lunas", "Pembayaran periode ini sudah diverifikasi Bendahara.", "kas-status-paid", "✓"],
+    DITOLAK: ["Perlu Diperbaiki", item && item.catatanVerifikasi ? item.catatanVerifikasi : "Konfirmasi ditolak. Silakan cek lalu kirim ulang.", "kas-status-rejected", "!"]
   }[normalized] || [normalized, "", "kas-status-unpaid", "○"];
 
-  return `<div class="kas-current-status ${meta[2]}">
-    <span>${meta[3]}</span>
-    <div>
-      <small>${escapeHtml(kasPeriodLabelClient(compactUI.kas.currentPeriod))}</small>
-      <strong>${escapeHtml(meta[0])}</strong>
-      <p>${escapeHtml(meta[1])}</p>
-    </div>
-  </div>`;
+  return `<div class="kas-current-status ${meta[2]}"><span>${meta[3]}</span><div><small>${escapeHtml(kasPeriodLabelClient(compactUI.kas.currentPeriod))}</small><strong>${escapeHtml(meta[0])}</strong><p>${escapeHtml(meta[1])}</p></div></div>`;
 }
 
 
 function kasHistoryCardHtml(item) {
-  const status = String(item.status || "MENUNGGU").toUpperCase();
-  return `<button type="button" class="kas-history-card" onclick="openKasHistoryDetail('${escapeJs(item.id)}')">
-    <span class="kas-history-icon">${status === "LUNAS" ? "✓" : status === "MENUNGGU" ? "⏳" : "!"}</span>
-    <span class="kas-history-main"><strong>${escapeHtml(item.periodeLabel || kasPeriodLabelClient(item.periode))}</strong><small>${escapeHtml(formatRupiah(item.nominal || 0))} • ${escapeHtml(item.tanggalBayar || "-")}</small></span>
-    <span class="status-pill ${kasStatusClass(status)}">${escapeHtml(kasStatusLabel(status))}</span>
-  </button>`;
+  const status = String(item.status || "BELUM_BAYAR").toUpperCase();
+  const icon = status === "LUNAS" ? "✓" : status === "MENUNGGU" ? "⏳" : status === "DITOLAK" ? "!" : "○";
+  const click = item.id ? `openKasHistoryDetail('${escapeJs(item.id)}')` : `openKasConfirmation('${escapeJs(item.periode)}')`;
+  const meta = item.id ? `${formatRupiah(item.nominal || 0)} • ${item.metode || "Kas"}${item.tanggalBayar ? " • " + item.tanggalBayar : ""}` : `${formatRupiah(item.nominal || 0)} • belum ada pembayaran`;
+  return `<button type="button" class="kas-history-card ${status === "BELUM_BAYAR" ? "is-unpaid" : ""}" onclick="${click}"><span class="kas-history-icon">${icon}</span><span class="kas-history-main"><strong>${escapeHtml(item.periodeLabel || kasPeriodLabelClient(item.periode))}</strong><small>${escapeHtml(meta)}</small></span><span class="status-pill ${kasStatusClass(status)}">${escapeHtml(kasStatusLabel(status))}</span></button>`;
 }
 
 
@@ -3203,98 +3208,89 @@ function latestKasPaymentsByPeriod(items) {
 }
 
 
-function openKasConfirmation() {
+function openKasConfirmation(preferredPeriod = "") {
   const s = compactUI.portalSettings || {};
-  const periods = compactUI.kas.periods || [];
-  const latest = latestKasPaymentsByPeriod(compactUI.kas.payments || []);
-  const available = periods.filter(p => !latest[p.value] || String(latest[p.value].status || "").toUpperCase() === "DITOLAK");
-  const selected = available.some(p => p.value === compactUI.kas.currentPeriod)
-    ? compactUI.kas.currentPeriod
-    : (available[0] ? available[0].value : "");
-
-  if (!available.length) {
-    showToast("Semua periode pada tahun ajaran ini sudah memiliki konfirmasi aktif/LUNAS.");
-    return;
-  }
+  const years = compactUI.kas.years || [compactUI.kas.tahunAjaran];
+  const selectedYear = compactUI.kas.tahunAjaran || years[0] || "";
+  const banks = (s.bankAccounts || []).filter(x => String(x.status || "AKTIF").toUpperCase() === "AKTIF" && x.bank && x.number);
+  const qrisActive = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
+  const methods = [];
+  if (qrisActive) methods.push("QRIS");
+  if (banks.length) methods.push("TRANSFER BANK");
+  methods.push("TUNAI");
+  const defaultMethod = methods[0];
 
   setModalHtml(`
-    <div class="modal-handle"></div>
-    <button class="modal-close" type="button" onclick="openKasSaya()">×</button>
-    <div class="modal-title-row"><div class="modal-icon compact">🧾</div><div><h3>Konfirmasi Pembayaran</h3><p class="modal-subtitle">Isi setelah transaksi QRIS berhasil.</p></div></div>
-    <div class="payment-safety-note">Portal tidak menyimpan screenshot transaksi. Bendahara mencocokkan data ini dengan riwayat QRIS.</div>
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="openKasSaya()">×</button>
+    <div class="modal-title-row"><div class="modal-icon compact">🧾</div><div><h3>Konfirmasi Pembayaran</h3><p class="modal-subtitle">Pilih periode dan metode pembayaran.</p></div></div>
+    <div class="payment-safety-note">Catatan asli guru tetap tersimpan. Bendahara dapat menetapkan periode final saat verifikasi bila catatan pembayaran menunjukkan bulan yang berbeda.</div>
     <form id="kasConfirmForm" class="manager-form compact-form" onsubmit="submitKasConfirmation(event)">
-      <label class="modal-label">Bulan Kas</label>
-      <select id="kasConfirmPeriod" class="portal-select full" required>${available.map(p => `<option value="${escapeHtml(p.value)}" ${p.value === selected ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("")}</select>
-      <div class="compact-detail-grid">
-        <div><label class="modal-label">Nominal</label><input class="portal-input" type="text" value="${escapeHtml(formatRupiah(s.kasMonthly || 5000))}" readonly></div>
-        <div><label class="modal-label">Metode</label><input class="portal-input" type="text" value="QRIS" readonly></div>
-      </div>
-      <div class="compact-detail-grid">
-        <div><label class="modal-label">Tanggal Bayar</label><input id="kasConfirmDate" class="portal-input" type="date" value="${escapeHtml(localDateInputValue())}" required></div>
-        <div><label class="modal-label">Jam Bayar</label><input id="kasConfirmTime" class="portal-input" type="time" value="${escapeHtml(localTimeInputValue())}" required></div>
-      </div>
-      <label class="modal-label">Nomor Referensi <span class="optional-label">opsional</span></label>
-      <input id="kasConfirmReference" class="portal-input" type="text" maxlength="100" placeholder="Nomor referensi dari bukti QRIS">
-      <label class="modal-label">Link Bukti <span class="optional-label">opsional</span></label>
-      <input id="kasConfirmProof" class="portal-input" type="url" placeholder="https://...">
-      <div class="file-note">Jika diperlukan, simpan screenshot di akun pribadi lalu tempel link berbagi. File tidak masuk penyimpanan Portal.</div>
-      <label class="modal-label">Catatan <span class="optional-label">opsional</span></label>
-      <textarea id="kasConfirmNote" class="portal-textarea" rows="2" maxlength="500" placeholder="Misalnya nama akun pengirim"></textarea>
+      <div class="compact-detail-grid"><div><label class="modal-label">Tahun Ajaran</label><select id="kasConfirmYear" class="portal-select full" onchange="updateKasConfirmPeriodOptions('${escapeJs(preferredPeriod)}')">${years.map(y => `<option value="${escapeHtml(y)}" ${y === selectedYear ? "selected" : ""}>${escapeHtml(y)}</option>`).join("")}</select></div><div><label class="modal-label">Bulan Kas</label><select id="kasConfirmPeriod" class="portal-select full" required></select></div></div>
+      <div class="compact-detail-grid"><div><label class="modal-label">Nominal</label><input class="portal-input" type="text" value="${escapeHtml(formatRupiah(s.kasMonthly || 5000))}" readonly></div><div><label class="modal-label">Metode</label><select id="kasConfirmMethod" class="portal-select full" onchange="toggleKasPaymentMethodFields()">${methods.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("")}</select></div></div>
+      <div id="kasConfirmBankWrap" class="hidden"><label class="modal-label">Rekening Tujuan</label><select id="kasConfirmBank" class="portal-select full">${banks.map(b => `<option value="${escapeHtml(b.bank + "||" + b.number)}">${escapeHtml(b.bank)} • ${escapeHtml(b.number)} • a.n. ${escapeHtml(b.holder || "-")}</option>`).join("")}</select></div>
+      <div class="compact-detail-grid"><div><label class="modal-label">Tanggal Bayar</label><input id="kasConfirmDate" class="portal-input" type="date" value="${escapeHtml(localDateInputValue())}" required></div><div><label class="modal-label">Jam Bayar</label><input id="kasConfirmTime" class="portal-input" type="time" value="${escapeHtml(localTimeInputValue())}" required></div></div>
+      <label class="modal-label">Nomor Referensi <span class="optional-label">opsional</span></label><input id="kasConfirmReference" class="portal-input" type="text" maxlength="100" placeholder="Nomor referensi / 4 digit terakhir">
+      <label class="modal-label">Link Bukti <span class="optional-label">opsional</span></label><input id="kasConfirmProof" class="portal-input" type="url" placeholder="https://..."><div class="file-note">Jika diperlukan, simpan screenshot di akun pribadi lalu tempel link berbagi. File tidak masuk penyimpanan Portal.</div>
+      <label class="modal-label">Catatan <span class="optional-label">opsional</span></label><textarea id="kasConfirmNote" class="portal-textarea" rows="2" maxlength="500" placeholder="Contoh: Untuk kas Agustus / nama akun pengirim"></textarea>
       <button id="kasConfirmSubmitButton" class="primary-button" type="submit">KIRIM KONFIRMASI</button>
     </form>
     <button class="secondary-button" type="button" onclick="openKasSaya()">← Kembali</button>
   `);
+  updateKasConfirmPeriodOptions(preferredPeriod);
+  toggleKasPaymentMethodFields();
 }
 
 
 async function submitKasConfirmation(event) {
   event.preventDefault();
   setButtonLoading("kasConfirmSubmitButton", true, "Mengirim...");
-
   try {
+    const method = valueOf("kasConfirmMethod");
+    const bankRaw = method === "TRANSFER BANK" ? valueOf("kasConfirmBank") : "";
+    const parts = bankRaw.split("||");
     const res = await apiRequest("submitKasPayment", {
       token: sessionToken,
+      tahunAjaran: valueOf("kasConfirmYear"),
       periode: valueOf("kasConfirmPeriod"),
+      metode: method,
+      bankName: parts[0] || "",
+      bankNumber: parts[1] || "",
       tanggalBayar: valueOf("kasConfirmDate"),
       jamBayar: valueOf("kasConfirmTime"),
       referensi: valueOf("kasConfirmReference"),
       buktiUrl: valueOf("kasConfirmProof"),
       catatan: valueOf("kasConfirmNote")
     });
-
     showToast(res.message);
-    if (res.success) {
-      await loadDashboard();
-      await openKasSaya();
-    }
-  } catch (err) {
-    showToast(err.message);
-  } finally {
-    setButtonLoading("kasConfirmSubmitButton", false, "KIRIM KONFIRMASI");
-  }
+    if (res.success) { await loadDashboard(); await openKasSaya(valueOf("kasConfirmYear")); }
+  } catch (err) { showToast(err.message); }
+  finally { setButtonLoading("kasConfirmSubmitButton", false, "KIRIM KONFIRMASI"); }
 }
 
 
 function openKasHistoryDetail(id) {
   const item = (compactUI.kas.payments || []).find(x => x.id === id);
   if (!item) return;
-
+  const changedPeriod = item.periodeDiajukan && (item.periodeDiajukan !== item.periode || item.tahunAjaranDiajukan !== item.tahunAjaran);
   setModalHtml(`
-    <div class="modal-handle"></div>
-    <button class="modal-close" type="button" onclick="openKasSaya()">×</button>
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="openKasSaya()">×</button>
     <h3>Detail Pembayaran Kas</h3><p class="modal-subtitle">${escapeHtml(item.periodeLabel || "-")}</p>
     <div class="payment-detail-list">
       ${paymentDetailRow("Status", kasStatusLabel(item.status))}
+      ${paymentDetailRow("Periode Final", (item.periodeLabel || "-") + " • " + (item.tahunAjaran || "-"))}
+      ${changedPeriod ? paymentDetailRow("Periode Diajukan", (item.periodeDiajukanLabel || "-") + " • " + (item.tahunAjaranDiajukan || "-")) : ""}
       ${paymentDetailRow("Nominal", formatRupiah(item.nominal || 0))}
       ${paymentDetailRow("Tanggal", (item.tanggalBayar || "-") + (item.jamBayar ? " • " + item.jamBayar : ""))}
       ${paymentDetailRow("Metode", item.metode || "QRIS")}
+      ${item.bankTujuan ? paymentDetailRow("Bank Tujuan", item.bankTujuan + (item.rekeningTujuan ? " • " + item.rekeningTujuan : "")) : ""}
       ${paymentDetailRow("Referensi", item.referensi || "-")}
+      ${item.catatanAnggota ? paymentDetailRow("Catatan Saya", item.catatanAnggota) : ""}
       ${paymentDetailRow("Dikirim", item.tanggalKirim || "-")}
       ${item.diverifikasiOleh ? paymentDetailRow("Diverifikasi", item.diverifikasiOleh + (item.tanggalVerifikasi ? " • " + item.tanggalVerifikasi : "")) : ""}
       ${item.catatanVerifikasi ? paymentDetailRow("Catatan Bendahara", item.catatanVerifikasi) : ""}
     </div>
     ${item.buktiUrl ? `<button class="outline-button" type="button" onclick="openExternalLink('${escapeJs(item.buktiUrl)}')">🔗 Buka Bukti</button>` : ""}
-    ${String(item.status).toUpperCase() === "DITOLAK" ? `<button class="primary-button" type="button" onclick="openKasConfirmation()">KIRIM ULANG KONFIRMASI</button>` : ""}
+    ${String(item.status).toUpperCase() === "DITOLAK" ? `<button class="primary-button" type="button" onclick="openKasConfirmation('${escapeJs(item.periodeDiajukan || item.periode)}')">KIRIM ULANG KONFIRMASI</button>` : ""}
     <button class="secondary-button" type="button" onclick="openKasSaya()">← Kembali</button>
   `);
 }
@@ -3302,24 +3298,19 @@ function openKasHistoryDetail(id) {
 
 async function openKasVerification() {
   if (!currentUser || !(currentUser.role === "Admin" || String(currentUser.jabatan || "").toLowerCase() === "bendahara")) {
-    showToast("Verifikasi Kas hanya untuk Admin atau Bendahara.");
-    return;
+    showToast("Verifikasi Kas hanya untuk Admin atau Bendahara."); return;
   }
-
   showLoadingModal("Verifikasi Kas");
   try {
     const res = await apiRequest("listKasPaymentsManager", { token: sessionToken });
     if (!res.success) { showToast(res.message); closeModal(); return; }
-
     compactUI.kasReview.items = res.payments || [];
+    compactUI.kasReview.years = res.availableYears || [];
     compactUI.kasReview.tab = "MENUNGGU";
     compactUI.kasReview.query = "";
     compactUI.kasReview.visible = COMPACT_PAGE_SIZE;
     renderKasVerificationModal();
-  } catch (err) {
-    showToast(err.message);
-    closeModal();
-  }
+  } catch (err) { showToast(err.message); closeModal(); }
 }
 
 
@@ -3360,16 +3351,19 @@ function renderKasVerificationModal() {
 
 function kasReviewCardHtml(item) {
   const pending = String(item.status).toUpperCase() === "MENUNGGU";
+  const proposedYear = item.tahunAjaranDiajukan || item.tahunAjaran || compactUI.finance.tahunAjaran || "2026/2027";
+  const proposedPeriod = item.periodeDiajukan || item.periode || "";
+  const years = compactUI.kasReview.years && compactUI.kasReview.years.length ? compactUI.kasReview.years : [proposedYear];
+  const yearOptions = years.map(y => `<option value="${escapeHtml(y)}" ${y === proposedYear ? "selected" : ""}>${escapeHtml(y)}</option>`).join("");
+  const periodOptions = buildAcademicPeriodsClient(proposedYear).map(p => `<option value="${escapeHtml(p.value)}" ${p.value === proposedPeriod ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("");
+  const changed = item.periodeDiajukan && (item.periodeDiajukan !== item.periode || item.tahunAjaranDiajukan !== item.tahunAjaran);
 
   return `<div class="management-card kas-review-card">
-    <div class="management-card-head">
-      <div><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.sekolah || "-")}</small><small>${escapeHtml(item.periodeLabel || "-")} • ${escapeHtml(formatRupiah(item.nominal || 0))}</small></div>
-      <span class="status-pill ${kasStatusClass(item.status)}">${escapeHtml(kasStatusLabel(item.status))}</span>
-    </div>
-    <div class="kas-review-meta"><span>🗓 ${escapeHtml(item.tanggalBayar || "-")} ${escapeHtml(item.jamBayar || "")}</span><span>🔖 ${escapeHtml(item.referensi || "Tanpa referensi")}</span></div>
-    ${item.catatanAnggota ? `<p class="compact-clamp-2">${escapeHtml(item.catatanAnggota)}</p>` : ""}
+    <div class="management-card-head"><div><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.sekolah || "-")}</small><small>Diajukan: ${escapeHtml(item.periodeDiajukanLabel || item.periodeLabel || "-")} • ${escapeHtml(item.tahunAjaranDiajukan || item.tahunAjaran || "-")}</small></div><span class="status-pill ${kasStatusClass(item.status)}">${escapeHtml(kasStatusLabel(item.status))}</span></div>
+    <div class="kas-review-meta"><span>💳 ${escapeHtml(item.metode || "QRIS")}${item.bankTujuan ? " • " + escapeHtml(item.bankTujuan) : ""}</span><span>🗓 ${escapeHtml(item.tanggalBayar || "-")} ${escapeHtml(item.jamBayar || "")}</span><span>🔖 ${escapeHtml(item.referensi || "Tanpa referensi")}</span></div>
+    ${item.catatanAnggota ? `<div class="member-payment-note"><small>Catatan guru</small><p>${escapeHtml(item.catatanAnggota)}</p></div>` : ""}
     ${item.buktiUrl ? `<button class="proof-link proof-button" type="button" onclick="openExternalLink('${escapeJs(item.buktiUrl)}')">🔗 Buka Bukti</button>` : ""}
-    ${pending ? `<textarea id="kas-review-note-${escapeHtml(item.id)}" class="portal-textarea" rows="2" maxlength="500" placeholder="Catatan verifikasi (opsional)"></textarea><div class="review-buttons"><button type="button" class="approve-button" onclick="reviewKasPayment('${escapeJs(item.id)}','APPROVE')">✓ Verifikasi Lunas</button><button type="button" class="reject-button" onclick="reviewKasPayment('${escapeJs(item.id)}','REJECT')">✕ Tolak</button></div>` : item.catatanVerifikasi ? `<small class="review-note-readonly">Catatan: ${escapeHtml(item.catatanVerifikasi)}</small>` : ""}
+    ${pending ? `<div class="treasurer-period-box"><small>Periode ditetapkan Bendahara</small><div class="compact-detail-grid"><select id="kas-review-year-${escapeHtml(item.id)}" class="portal-select full" onchange="syncKasReviewPeriodOptions('${escapeJs(item.id)}')">${yearOptions}</select><select id="kas-review-period-${escapeHtml(item.id)}" class="portal-select full">${periodOptions}</select></div></div><textarea id="kas-review-note-${escapeHtml(item.id)}" class="portal-textarea" rows="2" maxlength="500" placeholder="Catatan verifikasi (opsional)"></textarea><div class="review-buttons"><button type="button" class="approve-button" onclick="reviewKasPayment('${escapeJs(item.id)}','APPROVE')">✓ Tetapkan Lunas</button><button type="button" class="reject-button" onclick="reviewKasPayment('${escapeJs(item.id)}','REJECT')">✕ Tolak</button></div>` : `<div class="verified-period-note"><small>Periode final</small><strong>${escapeHtml(item.periodeLabel || "-")} • ${escapeHtml(item.tahunAjaran || "-")}</strong>${changed ? `<span>Usulan awal: ${escapeHtml(item.periodeDiajukanLabel || "-")} • ${escapeHtml(item.tahunAjaranDiajukan || "-")}</span>` : ""}</div>${item.catatanVerifikasi ? `<small class="review-note-readonly">Catatan: ${escapeHtml(item.catatanVerifikasi)}</small>` : ""}`}
   </div>`;
 }
 
@@ -3396,28 +3390,20 @@ function loadMoreKasReview() {
 async function reviewKasPayment(id, decision) {
   const noteEl = document.getElementById(`kas-review-note-${id}`);
   const note = noteEl ? noteEl.value.trim() : "";
-  const message = decision === "APPROVE"
-    ? "Verifikasi pembayaran ini sebagai LUNAS?"
-    : "Tolak konfirmasi pembayaran ini?";
-
+  const yearEl = document.getElementById(`kas-review-year-${id}`);
+  const periodEl = document.getElementById(`kas-review-period-${id}`);
+  const message = decision === "APPROVE" ? "Tetapkan pembayaran ini sebagai LUNAS pada periode yang dipilih?" : "Tolak konfirmasi pembayaran ini?";
   if (!confirm(message)) return;
 
   try {
     const res = await apiRequest("reviewKasPayment", {
-      token: sessionToken,
-      paymentId: id,
-      decision,
-      note
+      token: sessionToken, paymentId: id, decision, note,
+      tahunAjaran: yearEl ? yearEl.value : "",
+      periode: periodEl ? periodEl.value : ""
     });
-
     showToast(res.message);
-    if (res.success) {
-      await loadDashboard();
-      await openKasVerification();
-    }
-  } catch (err) {
-    showToast(err.message);
-  }
+    if (res.success) { await loadDashboard(); await openKasVerification(); }
+  } catch (err) { showToast(err.message); }
 }
 
 
@@ -3469,6 +3455,76 @@ function isSafePortalImageUrl(url) {
   return /^https:\/\//i.test(text) || /^assets\/[A-Za-z0-9._\-/]+$/i.test(text);
 }
 
+function buildAcademicPeriodsClient(tahunAjaran) {
+  const m = String(tahunAjaran || "").match(/^(\d{4})\s*\/\s*(\d{4})$/);
+  if (!m) return [];
+  const start = Number(m[1]), end = Number(m[2]);
+  const pairs = [[start,7],[start,8],[start,9],[start,10],[start,11],[start,12],[end,1],[end,2],[end,3],[end,4],[end,5],[end,6]];
+  return pairs.map(([y,mo]) => ({ value: `${y}-${String(mo).padStart(2,"0")}`, label: kasPeriodLabelClient(`${y}-${String(mo).padStart(2,"0")}`) }));
+}
+
+function updateKasConfirmPeriodOptions(preferredPeriod = "") {
+  const yearEl = document.getElementById("kasConfirmYear");
+  const periodEl = document.getElementById("kasConfirmPeriod");
+  if (!yearEl || !periodEl) return;
+  const year = yearEl.value;
+  const latest = latestKasPaymentsByPeriod((compactUI.kas.payments || []).filter(x => String(x.tahunAjaran || x.tahunAjaranDiajukan || "") === year));
+  const available = buildAcademicPeriodsClient(year).filter(p => {
+    const item = latest[p.value];
+    return !item || String(item.status || "").toUpperCase() === "DITOLAK";
+  });
+  const preferred = available.some(p => p.value === preferredPeriod) ? preferredPeriod : (available.some(p => p.value === compactUI.kas.currentPeriod) ? compactUI.kas.currentPeriod : (available[0] ? available[0].value : ""));
+  periodEl.innerHTML = available.length ? available.map(p => `<option value="${escapeHtml(p.value)}" ${p.value === preferred ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("") : `<option value="">Semua periode sudah memiliki konfirmasi/LUNAS</option>`;
+}
+
+function toggleKasPaymentMethodFields() {
+  const method = valueOf("kasConfirmMethod");
+  const wrap = document.getElementById("kasConfirmBankWrap");
+  if (wrap) wrap.classList.toggle("hidden", method !== "TRANSFER BANK");
+}
+
+function syncKasReviewPeriodOptions(id) {
+  const yearEl = document.getElementById(`kas-review-year-${id}`);
+  const periodEl = document.getElementById(`kas-review-period-${id}`);
+  if (!yearEl || !periodEl) return;
+  const old = periodEl.value;
+  const periods = buildAcademicPeriodsClient(yearEl.value);
+  periodEl.innerHTML = periods.map(p => `<option value="${escapeHtml(p.value)}" ${p.value === old ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("");
+}
+
+async function copyTextToClipboard(value) {
+  const text = String(value || "");
+  try {
+    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else {
+      const temp = document.createElement("textarea"); temp.value = text; temp.style.position = "fixed"; temp.style.opacity = "0"; document.body.appendChild(temp); temp.select(); document.execCommand("copy"); temp.remove();
+    }
+    showToast("Nomor rekening disalin.");
+  } catch (e) { showToast("Tidak dapat menyalin. Silakan salin manual."); }
+}
+
+function renderFinanceKasPeriodControls() {
+  const f = compactUI.finance;
+  const years = f.years && f.years.length ? f.years : [f.tahunAjaran];
+  const periods = f.periods && f.periods.length ? f.periods : buildAcademicPeriodsClient(f.tahunAjaran);
+  return `<div class="finance-period-filter"><div><label class="modal-label">Tahun Ajaran</label><select class="portal-select full" onchange="setFinanceYear(this.value)">${years.filter(Boolean).map(y => `<option value="${escapeHtml(y)}" ${y === f.tahunAjaran ? "selected" : ""}>${escapeHtml(y)}</option>`).join("")}</select></div><div><label class="modal-label">Bulan Kas</label><select class="portal-select full" onchange="setFinancePeriod(this.value)">${periods.map(p => `<option value="${escapeHtml(p.value)}" ${p.value === f.period ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("")}</select></div></div>`;
+}
+
+async function setFinanceYear(year) {
+  compactUI.finance.tahunAjaran = year;
+  const periods = buildAcademicPeriodsClient(year);
+  const current = kasPeriodLabelClient(compactUI.finance.period) ? compactUI.finance.period : "";
+  compactUI.finance.period = periods.some(p => p.value === current) ? current : (periods[0] ? periods[0].value : "");
+  compactUI.finance.periods = periods;
+  await openFinanceCenter(compactUI.finance.tab);
+}
+
+async function setFinancePeriod(period) {
+  compactUI.finance.period = period;
+  if (compactUI.finance.tab === "MEMBERS") await loadFinanceMemberPeriod(period);
+  else await openFinanceCenter("SUMMARY");
+}
+
 function openQrisImage(url) {
   if (!isSafePortalImageUrl(url)) {
     showToast("Link QRIS tidak valid.");
@@ -3490,18 +3546,21 @@ async function openPortalSettings() {
     if (!res.success) { showToast(res.message); closeModal(); return; }
     const s = res.settings || {};
     compactUI.portalSettings = s;
+    const banks = [0,1,2].map(i => (s.bankAccounts || [])[i] || ({ status:"NONAKTIF", bank:"", number:"", holder:"" }));
     setModalHtml(`
       <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
-      <h3>Pengaturan Portal</h3><p class="modal-subtitle">Pengaturan Portal. V1.2.5 menambahkan verifikasi kas tanpa mengubah fitur lama.</p>
+      <h3>Pengaturan Portal</h3><p class="modal-subtitle">Jadwal salat, Kas, QRIS, dan rekening transfer KOM 3.</p>
       <form id="portalSettingsForm" class="manager-form compact-form" onsubmit="savePortalSettingsFromModal(event)">
         <div class="section-mini-title">Jadwal Salat</div>
         <label class="modal-label">Status</label><select id="settingPrayerStatus" class="portal-select full"><option value="AKTIF" ${String(s.prayerStatus).toUpperCase() === "AKTIF" ? "selected" : ""}>Aktif</option><option value="NONAKTIF" ${String(s.prayerStatus).toUpperCase() === "NONAKTIF" ? "selected" : ""}>Nonaktif</option></select>
-        <label class="modal-label">Lokasi</label><input id="settingPrayerAddress" class="portal-input" type="text" value="${escapeHtml(s.prayerAddress || "Kawali, Ciamis, Jawa Barat, Indonesia")}"><div class="file-note">Default: Kawali, Ciamis. Metode perhitungan dikunci ke Kementerian Agama RI.</div>
+        <label class="modal-label">Lokasi</label><input id="settingPrayerAddress" class="portal-input" type="text" value="${escapeHtml(s.prayerAddress || "Kawali, Ciamis, Jawa Barat, Indonesia")}"><div class="file-note">Default: Kawali, Ciamis. Metode dikunci ke Kementerian Agama RI.</div>
         <div class="section-mini-title top-gap">Kas & QRIS</div>
         <label class="modal-label">Kas Bulanan</label><input id="settingKasMonthly" class="portal-input" type="number" min="0" step="1000" value="${escapeHtml(String(s.kasMonthly || 5000))}">
         <label class="modal-label">Nama QRIS / Penerima</label><input id="settingQrisName" class="portal-input" type="text" value="${escapeHtml(s.qrisName || "MGMP Bahasa Inggris SMP Komisariat 3")}">
-        <label class="modal-label">Gambar QRIS</label><input id="settingQrisImage" class="portal-input" type="text" value="${escapeHtml(s.qrisImageUrl || "")}" placeholder="assets/qris.jpg atau https://..."><div class="file-note">Paling sederhana: upload qris.jpg ke folder assets GitHub, lalu isi <b>assets/qris.jpg</b>.</div>
+        <label class="modal-label">Gambar QRIS</label><input id="settingQrisImage" class="portal-input" type="text" value="${escapeHtml(s.qrisImageUrl || "")}" placeholder="assets/qris.jpg atau https://..."><div class="file-note">Upload qris.jpg ke folder assets GitHub lalu isi <b>assets/qris.jpg</b>.</div>
         <label class="modal-label">Status QRIS</label><select id="settingQrisStatus" class="portal-select full"><option value="NONAKTIF" ${String(s.qrisStatus).toUpperCase() !== "AKTIF" ? "selected" : ""}>Nonaktif</option><option value="AKTIF" ${String(s.qrisStatus).toUpperCase() === "AKTIF" ? "selected" : ""}>Aktif</option></select>
+        <div class="section-mini-title top-gap">Rekening Transfer</div>
+        ${banks.map((b,i) => `<div class="bank-setting-card"><div class="bank-setting-head"><strong>Rekening ${i+1}</strong><select id="settingBankStatus${i+1}" class="portal-select compact-select"><option value="NONAKTIF" ${String(b.status).toUpperCase() !== "AKTIF" ? "selected" : ""}>Nonaktif</option><option value="AKTIF" ${String(b.status).toUpperCase() === "AKTIF" ? "selected" : ""}>Aktif</option></select></div><div class="manager-form-grid"><input id="settingBankName${i+1}" class="portal-input" type="text" value="${escapeHtml(b.bank || "")}" placeholder="BRI / BJB / BCA"><input id="settingBankNumber${i+1}" class="portal-input" type="text" value="${escapeHtml(b.number || "")}" placeholder="Nomor rekening"></div><input id="settingBankHolder${i+1}" class="portal-input" type="text" value="${escapeHtml(b.holder || "")}" placeholder="Atas nama"></div>`).join("")}
         <label class="modal-label">Tahun Ajaran Default</label><input id="settingAcademicYear" class="portal-input" type="text" value="${escapeHtml(s.tahunAjaran || "2026/2027")}" placeholder="2026/2027">
         <button id="portalSettingsSaveButton" type="submit" class="primary-button">SIMPAN PENGATURAN</button>
       </form>
@@ -3514,6 +3573,12 @@ async function savePortalSettingsFromModal(event) {
   event.preventDefault();
   setButtonLoading("portalSettingsSaveButton", true, "Menyimpan...");
   try {
+    const bankAccounts = [1,2,3].map(i => ({
+      status: document.getElementById(`settingBankStatus${i}`).value,
+      bank: valueOf(`settingBankName${i}`),
+      number: valueOf(`settingBankNumber${i}`),
+      holder: valueOf(`settingBankHolder${i}`)
+    }));
     const res = await apiRequest("savePortalSettings", {
       token: sessionToken,
       prayerStatus: document.getElementById("settingPrayerStatus").value,
@@ -3522,14 +3587,11 @@ async function savePortalSettingsFromModal(event) {
       qrisName: valueOf("settingQrisName"),
       qrisImageUrl: valueOf("settingQrisImage"),
       qrisStatus: document.getElementById("settingQrisStatus").value,
-      tahunAjaran: valueOf("settingAcademicYear")
+      tahunAjaran: valueOf("settingAcademicYear"),
+      bankAccounts
     });
     showToast(res.message);
-    if (res.success) {
-      prayerWidgetData = null;
-      await loadPrayerWidget();
-      await openPortalSettings();
-    }
+    if (res.success) { prayerWidgetData = null; await loadPrayerWidget(); await openPortalSettings(); }
   } catch (err) { showToast(err.message); }
   finally { setButtonLoading("portalSettingsSaveButton", false, "SIMPAN PENGATURAN"); }
 }
@@ -3547,19 +3609,17 @@ function isFinanceManagerClient() {
 }
 
 async function openFinanceCenter(tab = "SUMMARY") {
-  if (!isFinanceManagerClient()) {
-    await openKasSaya();
-    return;
-  }
+  if (!isFinanceManagerClient()) { await openKasSaya(); return; }
 
   showLoadingModal("Keuangan MGMP");
   try {
     const requestedTab = tab || "SUMMARY";
-    const summaryPromise = apiRequest("financeSummary", { token: sessionToken });
+    const payload = { token: sessionToken, tahunAjaran: compactUI.finance.tahunAjaran || "", periode: compactUI.finance.period || "" };
+    const summaryPromise = apiRequest("financeSummary", payload);
     const tabPromise = requestedTab === "TRANSACTIONS"
-      ? apiRequest("financeTransactions", { token: sessionToken })
+      ? apiRequest("financeTransactions", { token: sessionToken, tahunAjaran: compactUI.finance.tahunAjaran || "" })
       : requestedTab === "MEMBERS"
-        ? apiRequest("financeMemberRecap", { token: sessionToken })
+        ? apiRequest("financeMemberRecap", payload)
         : null;
 
     const summaryRes = await summaryPromise;
@@ -3568,6 +3628,8 @@ async function openFinanceCenter(tab = "SUMMARY") {
     compactUI.finance.summary = summaryRes.summary || {};
     compactUI.finance.monthly = summaryRes.monthly || [];
     compactUI.finance.tahunAjaran = summaryRes.tahunAjaran || "";
+    compactUI.finance.years = summaryRes.availableYears || [];
+    compactUI.finance.periods = summaryRes.periods || compactUI.finance.periods || [];
     compactUI.finance.period = summaryRes.currentPeriod || compactUI.finance.period || "";
     compactUI.finance.tab = requestedTab;
     compactUI.finance.transactionVisible = COMPACT_PAGE_SIZE;
@@ -3576,35 +3638,25 @@ async function openFinanceCenter(tab = "SUMMARY") {
     compactUI.finance.transactionQuery = "";
     compactUI.finance.memberQuery = "";
 
-    if (requestedTab === "SUMMARY") {
-      compactUI.finance.ledgerLoaded = false;
-      compactUI.finance.membersLoaded = false;
-      renderFinanceCenter();
-      return;
-    }
-
+    if (requestedTab === "SUMMARY") { compactUI.finance.ledgerLoaded = false; compactUI.finance.membersLoaded = false; renderFinanceCenter(); return; }
     if (requestedTab === "TRANSACTIONS") {
       const ledgerRes = await tabPromise;
       if (!ledgerRes.success) throw new Error(ledgerRes.message || "Gagal memuat transaksi.");
       compactUI.finance.ledger = ledgerRes.transactions || [];
       compactUI.finance.ledgerLoaded = true;
     }
-
     if (requestedTab === "MEMBERS") {
       const recapRes = await tabPromise;
       if (!recapRes.success) throw new Error(recapRes.message || "Gagal memuat rekap kas.");
       compactUI.finance.members = recapRes.members || [];
-      compactUI.finance.periods = recapRes.periods || [];
+      compactUI.finance.periods = recapRes.periods || compactUI.finance.periods;
+      compactUI.finance.years = recapRes.availableYears || compactUI.finance.years;
       compactUI.finance.period = recapRes.periode || compactUI.finance.period;
-      compactUI.finance.tahunAjaran = summaryRes.tahunAjaran || recapRes.tahunAjaran || "";
+      compactUI.finance.tahunAjaran = recapRes.tahunAjaran || compactUI.finance.tahunAjaran;
       compactUI.finance.membersLoaded = true;
     }
-
     renderFinanceCenter();
-  } catch (err) {
-    showToast(err.message);
-    closeModal();
-  }
+  } catch (err) { showToast(err.message); closeModal(); }
 }
 
 function renderFinanceCenter() {
@@ -3644,17 +3696,17 @@ function renderFinanceSummaryTab() {
   const f = compactUI.finance;
   const s = f.summary || {};
   const latest = f.ledgerLoaded ? (f.ledger || []).filter(x => x.status === "AKTIF").slice(0, 3) : [];
+  const periodLabel = kasPeriodLabelClient(f.period);
   return `
+    ${renderFinanceKasPeriodControls()}
     <div class="finance-stat-grid">
       ${financeStatCard("Pemasukan Bulan Ini", formatRupiah(s.pemasukanBulanIni || 0), "↗")}
       ${financeStatCard("Pengeluaran Bulan Ini", formatRupiah(s.pengeluaranBulanIni || 0), "↘")}
-      ${financeStatCard("Kas Lunas", String(s.kasLunas || 0) + " anggota", "✓")}
-      ${financeStatCard("Belum Bayar", String(s.kasBelum || 0) + " anggota", "!")}
+      ${financeStatCard("Lunas " + periodLabel, String(s.kasLunas || 0) + " guru", "✓")}
+      ${financeStatCard("Belum Bayar " + periodLabel, String(s.kasBelum || 0) + " guru", "!")}
     </div>
-    <div class="finance-action-row">
-      <button class="primary-button compact-primary" type="button" onclick="openFinanceTransactionForm()">+ Tambah Transaksi</button>
-      <button class="secondary-button compact-secondary" type="button" onclick="openKasVerification()">Verifikasi Kas</button>
-    </div>
+    ${Number(s.kasMenunggu || 0) ? `<div class="finance-period-note">⏳ ${escapeHtml(String(s.kasMenunggu))} guru masih menunggu verifikasi untuk ${escapeHtml(periodLabel)}.</div>` : ""}
+    <div class="finance-action-row"><button class="primary-button compact-primary" type="button" onclick="openFinanceTransactionForm()">+ Tambah Transaksi</button><button class="secondary-button compact-secondary" type="button" onclick="openKasVerification()">Verifikasi Kas</button></div>
     <div class="section-mini-title top-gap">Transaksi Terbaru</div>
     <div class="compact-list">${f.ledgerLoaded ? (latest.length ? latest.map(financeTransactionCard).join("") : `<div class="empty-panel">Belum ada transaksi.</div>`) : `<div class="empty-panel compact-info-panel">Data transaksi dimuat saat tab <b>Transaksi</b> dibuka agar Keuangan tampil lebih cepat.</div>`}</div>
   `;
@@ -3730,7 +3782,7 @@ function financeTransactionCard(item) {
   const isIncome = item.jenis === "PEMASUKAN";
   const amountClass = isIncome ? "finance-in" : "finance-out";
   const sign = isIncome ? "+" : "−";
-  const sourceLabel = item.sumber === "KAS" ? "Kas Anggota" : (item.kategori || "Transaksi");
+  const sourceLabel = item.sumber === "KAS" ? "Kas Guru" : (item.kategori || "Transaksi");
   const canEdit = item.dapatDiedit && item.status !== "BATAL";
   return `<div class="finance-row ${item.status === "BATAL" ? "is-cancelled" : ""}">
     <div class="finance-row-icon ${amountClass}">${isIncome ? "↗" : "↘"}</div>
@@ -3744,35 +3796,37 @@ function filterFinanceTransactions(value) { compactUI.finance.transactionQuery =
 function loadMoreFinanceTransactions() { compactUI.finance.transactionVisible += COMPACT_PAGE_SIZE; renderFinanceCenter(); }
 
 async function loadFinanceMemberPeriod(period) {
-  showLoadingModal("Rekap Kas Anggota");
+  showLoadingModal("Rekap Kas Guru");
   try {
     const res = await apiRequest("financeMemberRecap", { token: sessionToken, periode: period, tahunAjaran: compactUI.finance.tahunAjaran });
     if (!res.success) throw new Error(res.message || "Gagal memuat rekap.");
     compactUI.finance.period = res.periode;
     compactUI.finance.periods = res.periods || compactUI.finance.periods;
+    compactUI.finance.years = res.availableYears || compactUI.finance.years;
     compactUI.finance.members = res.members || [];
     compactUI.finance.membersLoaded = true;
     compactUI.finance.memberVisible = COMPACT_PAGE_SIZE;
     compactUI.finance.memberQuery = "";
+    const summaryRes = await apiRequest("financeSummary", { token: sessionToken, tahunAjaran: compactUI.finance.tahunAjaran, periode: res.periode });
+    if (summaryRes.success) compactUI.finance.summary = summaryRes.summary || compactUI.finance.summary;
     renderFinanceCenter();
   } catch (err) { showToast(err.message); closeModal(); }
 }
 
 function renderFinanceMembersTab() {
   const f = compactUI.finance;
-  if (!f.membersLoaded) return `<div class="empty-panel compact-info-panel"><span class="mini-loader"></span> Memuat rekap kas anggota...</div>`;
+  if (!f.membersLoaded) return `<div class="empty-panel compact-info-panel"><span class="mini-loader"></span> Memuat rekap kas guru...</div>`;
   const q = String(f.memberQuery || "").toLowerCase();
   const items = (f.members || []).filter(item => {
     if (f.memberStatus !== "ALL" && item.status !== f.memberStatus) return false;
     if (!q) return true;
-    return [item.nama, item.sekolah].join(" ").toLowerCase().includes(q);
+    return [item.nama, item.sekolah, item.jabatan, item.role].join(" ").toLowerCase().includes(q);
   });
   const counts = {};
   (f.members || []).forEach(x => counts[x.status] = (counts[x.status] || 0) + 1);
-  const options = (f.periods || []).map(p => `<option value="${escapeHtml(p.value)}" ${p.value === f.period ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("");
   return `
-    <label class="modal-label">Periode Kas</label><select class="portal-select full" onchange="loadFinanceMemberPeriod(this.value)">${options}</select>
-    ${compactSearchHtml(f.memberQuery, "filterFinanceMembers", "Cari anggota/sekolah...")}
+    ${renderFinanceKasPeriodControls()}
+    ${compactSearchHtml(f.memberQuery, "filterFinanceMembers", "Cari guru/sekolah...")}
     <div class="compact-tabs finance-member-tabs">
       ${compactTabButton("Belum", "BELUM_BAYAR", f.memberStatus, counts.BELUM_BAYAR || 0, "setFinanceMemberStatus")}
       ${compactTabButton("Menunggu", "MENUNGGU", f.memberStatus, counts.MENUNGGU || 0, "setFinanceMemberStatus")}
@@ -3787,7 +3841,7 @@ function renderFinanceMembersTab() {
 function financeMemberCard(item) {
   const labels = { LUNAS: "LUNAS", MENUNGGU: "MENUNGGU", DITOLAK: "DITOLAK", BELUM_BAYAR: "BELUM BAYAR" };
   const cls = item.status === "LUNAS" ? "approved" : item.status === "MENUNGGU" ? "pending" : item.status === "DITOLAK" ? "rejected" : "neutral";
-  return `<div class="finance-member-row"><div><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.sekolah)}</small></div><div class="finance-member-side"><span class="status-pill ${cls}">${escapeHtml(labels[item.status] || item.status)}</span><small>${formatRupiah(item.nominal || 0)}</small></div></div>`;
+  return `<div class="finance-member-row"><div><strong>${escapeHtml(item.nama)}</strong><small>${escapeHtml(item.sekolah)}</small><small>${escapeHtml(item.jabatan || item.role || "Guru KOM 3")}</small></div><div class="finance-member-side"><span class="status-pill ${cls}">${escapeHtml(labels[item.status] || item.status)}</span><small>${formatRupiah(item.nominal || 0)}</small></div></div>`;
 }
 
 function setFinanceMemberStatus(value) { compactUI.finance.memberStatus = value; compactUI.finance.memberVisible = COMPACT_PAGE_SIZE; renderFinanceCenter(); }
@@ -3807,7 +3861,7 @@ function openFinanceTransactionForm(id = "") {
   const today = localDateInputValue();
   setModalHtml(`
     <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
-    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderFinanceCenter()">←</button><div><h3>${item ? "Edit" : "Tambah"} Transaksi</h3><p class="modal-subtitle">Pemasukan/pengeluaran selain kas anggota.</p></div></div>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderFinanceCenter()">←</button><div><h3>${item ? "Edit" : "Tambah"} Transaksi</h3><p class="modal-subtitle">Pemasukan/pengeluaran selain kas guru.</p></div></div>
     <form onsubmit="submitFinanceTransaction(event,'${escapeJs(item ? item.id : "")}')">
       <label class="modal-label">Tanggal</label><input id="financeDate" class="portal-input" type="date" value="${escapeHtml(item ? item.tanggal : today)}" required>
       <div class="manager-form-grid"><div><label class="modal-label">Jenis</label><select id="financeType" class="portal-select full"><option value="PEMASUKAN" ${item && item.jenis === "PEMASUKAN" ? "selected" : ""}>Pemasukan</option><option value="PENGELUARAN" ${item && item.jenis === "PENGELUARAN" ? "selected" : ""}>Pengeluaran</option></select></div><div><label class="modal-label">Nominal</label><input id="financeAmount" class="portal-input" type="number" min="1" step="1" value="${escapeHtml(item ? String(item.nominal) : "")}" placeholder="50000" required></div></div>
@@ -3935,7 +3989,7 @@ function renderPublicFinanceReport() {
       <div><small>Keluar Bulan Ini</small><strong>${formatRupiah(s.pengeluaranBulanIni || 0)}</strong></div>
     </div>
 
-    <div class="public-finance-note">Laporan ini hanya menampilkan angka umum. Data pembayaran tiap anggota dan data internal Bendahara tidak ditampilkan.</div>
+    <div class="public-finance-note">Laporan ini hanya menampilkan angka umum. Data pembayaran tiap guru dan data internal Bendahara tidak ditampilkan.</div>
     <div class="section-mini-title top-gap">Laporan Bulanan</div>
     <div class="compact-list">${rowsHtml}</div>
     ${compactPagerHtml(f.page, totalPages, "changePublicFinancePage")}
