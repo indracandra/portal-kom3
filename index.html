@@ -4,10 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <meta name="theme-color" content="#0b3154">
+  <meta name="application-name" content="Portal KOM 3">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Portal KOM 3">
+  <link rel="manifest" href="manifest.json?v=1.9">
+  <link rel="apple-touch-icon" href="assets/logo.jpg">
 
   <title>Portal KOM 3</title>
 
-  <link rel="stylesheet" href="style.css?v=1.7">
+  <link rel="stylesheet" href="style.css?v=1.9">
 </head>
 <body>
 
@@ -426,6 +432,16 @@
                 <div class="quick-icon q-navy">📁</div>
                 <span>Dokumen</span>
               </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('Dokumentasi')">
+                <div class="quick-icon q-pink">📸</div>
+                <span>Dokumentasi</span>
+              </button>
+
+              <button class="quick-item" type="button" onclick="openFeature('FLS')">
+                <div class="quick-icon q-indigo">🏅</div>
+                <span>FLS</span>
+              </button>
             </div>
           </section>
 
@@ -521,6 +537,6 @@
 
   </div>
 
-  <script src="app.js?v=1.7"></script>
+  <script src="app.js?v=1.9"></script>
 </body>
 </html>
