@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.5.0
+   PORTAL KOM 3 - FRONTEND V1.6.0
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -79,6 +79,13 @@
    - Kontribusi link Drive dari seluruh anggota
    - Review Admin/Pengurus sebelum terbit
    - Search + filter + pagination 5 item per halaman
+
+   TAMBAHAN V1.6:
+   - Hari Belajar Guru: jadwal, giliran sekolah/guru, dan riwayat
+   - Bank Praktik Baik dari sesi yang telah selesai
+   - Materi/video memakai link eksternal agar Portal tetap ringan
+   - Terhubung ke Agenda/Absensi lama melalui AGENDA_ID
+   - Admin/Pengurus dapat melihat daftar peserta dari absensi
 ========================================================= */
 
 const APP_CONFIG = {
@@ -135,6 +142,11 @@ const compactUI = {
     published: [], mine: [], review: [], isManager: false,
     tab: "BANK", query: "", type: "ALL", kelas: "ALL", semester: "ALL",
     page: 1, myPage: 1, reviewPage: 1, reviewStatus: "MENUNGGU"
+  },
+  hbg: {
+    items: [], agendas: [], isManager: false, defaultYear: "",
+    tab: "NEXT", query: "", year: "ALL", manageStatus: "ALL", page: 1,
+    participants: [], participantPage: 1, participantProgram: null
   },
   portalSettings: null
 };
@@ -4692,6 +4704,374 @@ async function setLearningResourceStatus(id, status) {
 }
 
 
+
+/* =========================================================
+   V1.6 - HARI BELAJAR GURU & PRAKTIK BAIK
+========================================================= */
+
+async function openHbgCenter(tab = "NEXT") {
+  showLoadingModal(tab === "PRACTICE" ? "Bank Praktik Baik" : "Hari Belajar Guru");
+
+  try {
+    const res = await apiRequest("listHbgPrograms", { token: sessionToken });
+    if (!res.success) {
+      if (res.sessionExpired) forceLogout();
+      throw new Error(res.message || "Hari Belajar Guru belum dapat dibuka.");
+    }
+
+    const allowedTabs = ["NEXT", "PRACTICE", "HISTORY", "MANAGE"];
+    compactUI.hbg.items = res.items || [];
+    compactUI.hbg.agendas = res.agendas || [];
+    compactUI.hbg.isManager = !!res.isManager;
+    compactUI.hbg.defaultYear = res.defaultYear || "";
+    compactUI.hbg.tab = allowedTabs.includes(tab) ? tab : "NEXT";
+    if (compactUI.hbg.tab === "MANAGE" && !compactUI.hbg.isManager) compactUI.hbg.tab = "NEXT";
+    compactUI.hbg.query = "";
+    compactUI.hbg.year = "ALL";
+    compactUI.hbg.manageStatus = "ALL";
+    compactUI.hbg.page = 1;
+    renderHbgCenter();
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
+}
+
+
+function hbgStatusLabel(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "RENCANA") return "Rencana";
+  if (value === "AKTIF") return "Aktif";
+  if (value === "SELESAI") return "Selesai";
+  if (value === "BATAL") return "Batal";
+  return value || "-";
+}
+
+
+function hbgStatusClass(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "AKTIF") return "approved";
+  if (value === "RENCANA") return "pending";
+  if (value === "BATAL") return "rejected";
+  return "neutral";
+}
+
+
+function hbgModeLabel(mode) {
+  const value = String(mode || "").toUpperCase();
+  if (value === "LURING") return "Luring";
+  if (value === "DARING") return "Daring";
+  if (value === "HYBRID") return "Hybrid";
+  return value || "-";
+}
+
+
+function hbgYearOptions(selected = "ALL") {
+  const years = Array.from(new Set((compactUI.hbg.items || []).map(x => String(x.tahunAjaran || "").trim()).filter(Boolean)));
+  if (compactUI.hbg.defaultYear && !years.includes(compactUI.hbg.defaultYear)) years.push(compactUI.hbg.defaultYear);
+  years.sort().reverse();
+  return `<option value="ALL" ${selected === "ALL" ? "selected" : ""}>Semua Tahun</option>` +
+    years.map(year => `<option value="${escapeHtml(year)}" ${selected === year ? "selected" : ""}>${escapeHtml(year)}</option>`).join("");
+}
+
+
+function hbgTabItems_(tab) {
+  const hbg = compactUI.hbg;
+  const q = String(hbg.query || "").toLowerCase();
+  let items = (hbg.items || []).filter(item => {
+    const status = String(item.status || "").toUpperCase();
+    if (tab === "NEXT" && !["RENCANA", "AKTIF"].includes(status)) return false;
+    if (tab === "PRACTICE" && status !== "SELESAI") return false;
+    if (tab === "HISTORY" && !["SELESAI", "BATAL"].includes(status)) return false;
+    if (tab === "MANAGE" && hbg.manageStatus !== "ALL" && status !== hbg.manageStatus) return false;
+    if (hbg.year !== "ALL" && String(item.tahunAjaran || "") !== hbg.year) return false;
+    if (q && ![
+      item.namaKegiatan, item.sekolahPelaksana, item.narasumber, item.judulPraktikBaik,
+      item.ringkasan, item.lokasi, item.tahunAjaran
+    ].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  items.sort((a, b) => {
+    const da = String(a.tanggalInput || "");
+    const db = String(b.tanggalInput || "");
+    return tab === "NEXT" ? da.localeCompare(db) : db.localeCompare(da);
+  });
+  return items;
+}
+
+
+function hbgCounts_() {
+  const items = compactUI.hbg.items || [];
+  return {
+    next: items.filter(x => ["RENCANA", "AKTIF"].includes(String(x.status).toUpperCase())).length,
+    practice: items.filter(x => String(x.status).toUpperCase() === "SELESAI").length,
+    history: items.filter(x => ["SELESAI", "BATAL"].includes(String(x.status).toUpperCase())).length,
+    manage: items.length
+  };
+}
+
+
+function renderHbgCenter() {
+  const hbg = compactUI.hbg;
+  const counts = hbgCounts_();
+  const items = hbgTabItems_(hbg.tab);
+  const totalPages = Math.max(1, Math.ceil(items.length / COMPACT_PAGE_SIZE));
+  hbg.page = Math.min(Math.max(1, hbg.page || 1), totalPages);
+  const start = (hbg.page - 1) * COMPACT_PAGE_SIZE;
+  const rows = items.slice(start, start + COMPACT_PAGE_SIZE);
+
+  const cards = rows.length
+    ? rows.map(item => hbgCardHtml_(item, hbg.tab === "MANAGE")).join("")
+    : `<div class="empty-panel">Belum ada data pada bagian ini.</div>`;
+
+  const managerTools = hbg.tab === "MANAGE" && hbg.isManager
+    ? `<div class="hbg-manager-bar"><button class="primary-button" type="button" onclick="openHbgEditor('')">＋ TAMBAH HARI BELAJAR</button></div>`
+    : "";
+
+  const statusFilter = hbg.tab === "MANAGE"
+    ? `<select class="portal-select full" onchange="setHbgManageStatus(this.value)">
+        <option value="ALL" ${hbg.manageStatus === "ALL" ? "selected" : ""}>Semua Status</option>
+        <option value="RENCANA" ${hbg.manageStatus === "RENCANA" ? "selected" : ""}>Rencana</option>
+        <option value="AKTIF" ${hbg.manageStatus === "AKTIF" ? "selected" : ""}>Aktif</option>
+        <option value="SELESAI" ${hbg.manageStatus === "SELESAI" ? "selected" : ""}>Selesai</option>
+        <option value="BATAL" ${hbg.manageStatus === "BATAL" ? "selected" : ""}>Batal</option>
+      </select>`
+    : "";
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="hbg-hero">
+      <div class="hbg-hero-icon">🎓</div>
+      <div><small>V1.6 • PENGEMBANGAN GURU</small><h3>Hari Belajar Guru</h3><p>Giliran berbagi, praktik baik, materi, dan rekam kegiatan Komisariat 3.</p></div>
+    </div>
+
+    <div class="compact-tabs hbg-tabs">
+      ${compactTabButton("Berikutnya", "NEXT", hbg.tab, counts.next, "setHbgTab")}
+      ${compactTabButton("Praktik Baik", "PRACTICE", hbg.tab, counts.practice, "setHbgTab")}
+      ${compactTabButton("Riwayat", "HISTORY", hbg.tab, counts.history, "setHbgTab")}
+      ${hbg.isManager ? compactTabButton("Kelola", "MANAGE", hbg.tab, counts.manage, "setHbgTab") : ""}
+    </div>
+
+    ${managerTools}
+    <input class="portal-input compact-search" type="search" placeholder="Cari sekolah, narasumber, atau praktik baik..." value="${escapeHtml(hbg.query)}" oninput="filterHbg(this.value)">
+    <div class="compact-filter-grid hbg-filter-grid">
+      <select class="portal-select full" onchange="setHbgYear(this.value)">${hbgYearOptions(hbg.year)}</select>
+      ${statusFilter}
+    </div>
+    <div class="hbg-result-count">${items.length} kegiatan ditemukan</div>
+    <div class="compact-list">${cards}</div>
+    ${compactPagerHtml(hbg.page, totalPages, "changeHbgPage")}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+
+function hbgCardHtml_(item, managerMode = false) {
+  const a = item.attendance || { hadir: 0, total: 0 };
+  const status = String(item.status || "").toUpperCase();
+  let manage = "";
+  if (managerMode) {
+    const statusButtons = status === "RENCANA"
+      ? `<button class="bank-review-button approve" type="button" onclick="setHbgProgramStatus('${escapeJs(item.id)}','AKTIF')">Aktifkan</button>`
+      : status === "AKTIF"
+        ? `<button class="bank-review-button approve" type="button" onclick="setHbgProgramStatus('${escapeJs(item.id)}','SELESAI')">Selesaikan</button>`
+        : status === "SELESAI"
+          ? `<button class="bank-review-button neutral" type="button" onclick="setHbgProgramStatus('${escapeJs(item.id)}','RENCANA')">Jadikan Rencana</button>`
+          : `<button class="bank-review-button neutral" type="button" onclick="setHbgProgramStatus('${escapeJs(item.id)}','RENCANA')">Pulihkan</button>`;
+    manage = `<div class="hbg-card-actions"><button class="bank-review-button neutral" type="button" onclick="openHbgEditor('${escapeJs(item.id)}')">✎ Edit</button>${statusButtons}${status !== "BATAL" ? `<button class="bank-review-button reject" type="button" onclick="setHbgProgramStatus('${escapeJs(item.id)}','BATAL')">Batal</button>` : ""}</div>`;
+  }
+
+  return `<article class="hbg-card">
+    <div class="hbg-card-top">
+      <div class="hbg-date-box"><b>${escapeHtml((item.tanggal || "-").split(" ")[0])}</b><span>${escapeHtml(((item.tanggal || "").split(" ")[1] || "").substring(0,3).toUpperCase())}</span></div>
+      <div class="hbg-card-title"><small>${escapeHtml(item.namaKegiatan || "Hari Belajar Guru")}</small><strong>${escapeHtml(item.judulPraktikBaik || "Praktik Baik")}</strong><p>${escapeHtml(item.sekolahPelaksana || "-")}</p></div>
+      <span class="status-pill ${hbgStatusClass(status)}">${escapeHtml(hbgStatusLabel(status))}</span>
+    </div>
+    <div class="hbg-chip-row"><span>🕐 ${escapeHtml(item.jam || "-")}</span><span>💻 ${escapeHtml(hbgModeLabel(item.moda))}</span><span>🎤 ${escapeHtml(item.narasumber || "-")}</span></div>
+    <div class="hbg-card-meta">📍 ${escapeHtml(item.lokasi || "-")} • 👥 ${Number(a.hadir || 0)} hadir${item.agendaId ? "" : " • belum terhubung absensi"}</div>
+    <div class="hbg-card-actions"><button class="archive-open-button" type="button" onclick="openHbgDetail('${escapeJs(item.id)}')">Lihat Detail</button>${item.linkMateri ? `<button class="bank-review-button neutral" type="button" onclick="openExternalLink('${escapeJs(item.linkMateri)}')">📚 Materi</button>` : ""}${item.linkVideo ? `<button class="bank-review-button neutral" type="button" onclick="openExternalLink('${escapeJs(item.linkVideo)}')">▶ Video</button>` : ""}</div>
+    ${manage}
+  </article>`;
+}
+
+
+function setHbgTab(tab) { compactUI.hbg.tab = tab; compactUI.hbg.page = 1; renderHbgCenter(); }
+function filterHbg(value) { compactUI.hbg.query = value || ""; compactUI.hbg.page = 1; renderHbgCenter(); refocusCompactSearch(); }
+function setHbgYear(value) { compactUI.hbg.year = value || "ALL"; compactUI.hbg.page = 1; renderHbgCenter(); }
+function setHbgManageStatus(value) { compactUI.hbg.manageStatus = value || "ALL"; compactUI.hbg.page = 1; renderHbgCenter(); }
+function changeHbgPage(page) { compactUI.hbg.page = Number(page || 1); renderHbgCenter(); }
+
+
+function openHbgDetail(id) {
+  const item = (compactUI.hbg.items || []).find(x => String(x.id) === String(id));
+  if (!item) return showToast("Data kegiatan tidak ditemukan.");
+  const a = item.attendance || { hadir: 0, izin: 0, dinas: 0, total: 0 };
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderHbgCenter()">←</button><div><h3>Detail Hari Belajar Guru</h3><p class="modal-subtitle">${escapeHtml(item.tanggal || "-")} • ${escapeHtml(item.jam || "-")}</p></div></div>
+    <div class="hbg-detail-card">
+      <span class="status-pill ${hbgStatusClass(item.status)}">${escapeHtml(hbgStatusLabel(item.status))}</span>
+      <small>${escapeHtml(item.namaKegiatan || "Hari Belajar Guru")}</small>
+      <h3>${escapeHtml(item.judulPraktikBaik || "-")}</h3>
+      <p>${escapeHtml(item.ringkasan || "Belum ada ringkasan praktik baik.")}</p>
+      <div class="profile-data-grid hbg-detail-grid">
+        <div><small>SEKOLAH PELAKSANA</small><strong>${escapeHtml(item.sekolahPelaksana || "-")}</strong></div>
+        <div><small>NARASUMBER</small><strong>${escapeHtml(item.narasumber || "-")}</strong></div>
+        <div><small>MODA</small><strong>${escapeHtml(hbgModeLabel(item.moda))}</strong></div>
+        <div><small>LOKASI</small><strong>${escapeHtml(item.lokasi || "-")}</strong></div>
+        <div><small>TAHUN AJARAN</small><strong>${escapeHtml(item.tahunAjaran || "-")}</strong></div>
+        <div><small>AGENDA TERHUBUNG</small><strong>${escapeHtml(item.agendaId || "Belum dihubungkan")}</strong></div>
+      </div>
+      <div class="hbg-attendance-summary"><span><b>${Number(a.hadir || 0)}</b>Hadir</span><span><b>${Number(a.izin || 0)}</b>Izin</span><span><b>${Number(a.dinas || 0)}</b>Dinas</span></div>
+    </div>
+    <div class="hbg-card-actions hbg-detail-actions">
+      ${item.linkMateri ? `<button class="primary-button" type="button" onclick="openExternalLink('${escapeJs(item.linkMateri)}')">📚 BUKA MATERI</button>` : ""}
+      ${item.linkVideo ? `<button class="secondary-button" type="button" onclick="openExternalLink('${escapeJs(item.linkVideo)}')">▶ LIHAT VIDEO</button>` : ""}
+      ${compactUI.hbg.isManager && item.agendaId ? `<button class="secondary-button" type="button" onclick="openHbgParticipants('${escapeJs(item.id)}')">👥 DAFTAR PESERTA</button>` : ""}
+      ${compactUI.hbg.isManager ? `<button class="secondary-button" type="button" onclick="openHbgEditor('${escapeJs(item.id)}')">✎ EDIT KEGIATAN</button>` : ""}
+    </div>
+  `);
+}
+
+
+function openHbgEditor(id = "") {
+  if (!compactUI.hbg.isManager) return showToast("Akses ditolak.");
+  const item = id ? (compactUI.hbg.items || []).find(x => String(x.id) === String(id)) : null;
+  const year = item ? item.tahunAjaran : (compactUI.hbg.defaultYear || "2026/2027");
+  const agendaOptions = [`<option value="">Tidak dihubungkan dulu</option>`].concat((compactUI.hbg.agendas || []).map(a => `<option value="${escapeHtml(a.id)}" ${item && item.agendaId === a.id ? "selected" : ""}>${escapeHtml(a.tanggal || "-")} • ${escapeHtml(a.nama || a.id)}</option>`)).join("");
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderHbgCenter()">←</button><div><h3>${item ? "Edit" : "Tambah"} Hari Belajar Guru</h3><p class="modal-subtitle">Hubungkan dengan Agenda MGMP agar kehadiran terbaca otomatis.</p></div></div>
+    <form class="compact-form hbg-editor-form" onsubmit="saveHbgProgram(event,'${escapeJs(item ? item.id : "")}')">
+      <label class="modal-label">Agenda MGMP terkait (opsional)</label>
+      <select id="hbgAgendaId" class="portal-select full" onchange="applyHbgAgendaSelection(this.value)">${agendaOptions}</select>
+      <div class="form-grid-2">
+        <div><label class="modal-label">Tahun Ajaran</label><input id="hbgYearInput" class="portal-input" type="text" value="${escapeHtml(year)}" placeholder="2026/2027" required></div>
+        <div><label class="modal-label">Status</label><select id="hbgStatus" class="portal-select full"><option value="RENCANA" ${!item || item.status === "RENCANA" ? "selected" : ""}>Rencana</option><option value="AKTIF" ${item && item.status === "AKTIF" ? "selected" : ""}>Aktif</option><option value="SELESAI" ${item && item.status === "SELESAI" ? "selected" : ""}>Selesai</option><option value="BATAL" ${item && item.status === "BATAL" ? "selected" : ""}>Batal</option></select></div>
+      </div>
+      <label class="modal-label">Nama Kegiatan</label><input id="hbgName" class="portal-input" type="text" value="${escapeHtml(item ? item.namaKegiatan : "Hari Belajar Guru")}" required>
+      <div class="form-grid-2">
+        <div><label class="modal-label">Tanggal</label><input id="hbgDate" class="portal-input" type="date" value="${escapeHtml(item ? item.tanggalInput : "")}" required></div>
+        <div><label class="modal-label">Jam</label><input id="hbgTime" class="portal-input" type="time" value="${escapeHtml(item ? item.jam : "")}" required></div>
+      </div>
+      <div class="form-grid-2">
+        <div><label class="modal-label">Moda</label><select id="hbgMode" class="portal-select full"><option value="LURING" ${!item || item.moda === "LURING" ? "selected" : ""}>Luring</option><option value="DARING" ${item && item.moda === "DARING" ? "selected" : ""}>Daring</option><option value="HYBRID" ${item && item.moda === "HYBRID" ? "selected" : ""}>Hybrid</option></select></div>
+        <div><label class="modal-label">Lokasi / Platform</label><input id="hbgLocation" class="portal-input" type="text" value="${escapeHtml(item ? item.lokasi : "")}" placeholder="SMP / Google Meet" required></div>
+      </div>
+      <label class="modal-label">Sekolah Pelaksana / Giliran</label><input id="hbgSchool" class="portal-input" type="text" value="${escapeHtml(item ? item.sekolahPelaksana : "")}" placeholder="Contoh: SMP Negeri 2 Kawali" required>
+      <label class="modal-label">Narasumber / Guru Berbagi</label><input id="hbgSpeaker" class="portal-input" type="text" value="${escapeHtml(item ? item.narasumber : "")}" placeholder="Nama guru" required>
+      <label class="modal-label">Judul Praktik Baik</label><input id="hbgPracticeTitle" class="portal-input" type="text" value="${escapeHtml(item ? item.judulPraktikBaik : "")}" placeholder="Judul praktik baik" required>
+      <label class="modal-label">Ringkasan</label><textarea id="hbgSummary" class="portal-textarea" rows="3" placeholder="Ringkasan singkat praktik baik...">${escapeHtml(item ? item.ringkasan : "")}</textarea>
+      <label class="modal-label">Link Materi (opsional)</label><input id="hbgMaterialLink" class="portal-input" type="url" value="${escapeHtml(item ? item.linkMateri : "")}" placeholder="https://drive.google.com/..."><div class="file-note">Gunakan link Viewer. File tetap berada di Drive pemilik.</div>
+      <label class="modal-label">Link Video Praktik Baik (opsional)</label><input id="hbgVideoLink" class="portal-input" type="url" value="${escapeHtml(item ? item.linkVideo : "")}" placeholder="https://youtube.com/... atau link Drive">
+      <button id="hbgSaveButton" class="primary-button" type="submit">${item ? "SIMPAN PERUBAHAN" : "TAMBAH KEGIATAN"}</button>
+    </form>
+  `);
+}
+
+
+function applyHbgAgendaSelection(agendaId) {
+  if (!agendaId) return;
+  const agenda = (compactUI.hbg.agendas || []).find(x => String(x.id) === String(agendaId));
+  if (!agenda) return;
+  const pairs = [
+    ["hbgName", agenda.nama], ["hbgDate", agenda.tanggalInput], ["hbgTime", agenda.jam], ["hbgLocation", agenda.lokasi]
+  ];
+  pairs.forEach(pair => { const el = document.getElementById(pair[0]); if (el && pair[1]) el.value = pair[1]; });
+  const mode = document.getElementById("hbgMode");
+  if (mode && agenda.moda) {
+    const v = String(agenda.moda).toUpperCase();
+    if (["LURING", "DARING", "HYBRID"].includes(v)) mode.value = v;
+  }
+}
+
+
+async function saveHbgProgram(event, id = "") {
+  event.preventDefault();
+  setButtonLoading("hbgSaveButton", true, "Menyimpan...");
+  try {
+    const res = await apiRequest("saveHbgProgram", {
+      token: sessionToken,
+      id: id,
+      agendaId: valueOf("hbgAgendaId"),
+      tahunAjaran: valueOf("hbgYearInput"),
+      namaKegiatan: valueOf("hbgName"),
+      tanggal: valueOf("hbgDate"),
+      jam: valueOf("hbgTime"),
+      moda: valueOf("hbgMode"),
+      lokasi: valueOf("hbgLocation"),
+      sekolahPelaksana: valueOf("hbgSchool"),
+      narasumber: valueOf("hbgSpeaker"),
+      judulPraktikBaik: valueOf("hbgPracticeTitle"),
+      ringkasan: valueOf("hbgSummary"),
+      linkMateri: valueOf("hbgMaterialLink"),
+      linkVideo: valueOf("hbgVideoLink"),
+      status: valueOf("hbgStatus")
+    });
+    if (!res.success) throw new Error(res.message || "Kegiatan belum dapat disimpan.");
+    showToast(res.message);
+    await openHbgCenter("MANAGE");
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    setButtonLoading("hbgSaveButton", false, id ? "SIMPAN PERUBAHAN" : "TAMBAH KEGIATAN");
+  }
+}
+
+
+async function setHbgProgramStatus(id, status) {
+  const label = hbgStatusLabel(status);
+  if (!confirm(`Ubah status kegiatan menjadi ${label}?`)) return;
+  try {
+    const res = await apiRequest("setHbgProgramStatus", { token: sessionToken, id: id, status: status });
+    showToast(res.message);
+    if (res.success) await openHbgCenter("MANAGE");
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+
+async function openHbgParticipants(id) {
+  showLoadingModal("Daftar Peserta");
+  try {
+    const res = await apiRequest("hbgParticipants", { token: sessionToken, id: id });
+    if (!res.success) throw new Error(res.message || "Daftar peserta belum dapat dibuka.");
+    compactUI.hbg.participants = res.participants || [];
+    compactUI.hbg.participantProgram = res.program || null;
+    compactUI.hbg.participantPage = 1;
+    renderHbgParticipants();
+    if (res.message) showToast(res.message);
+  } catch (err) {
+    showToast(err.message);
+    renderHbgCenter();
+  }
+}
+
+
+function renderHbgParticipants() {
+  const items = compactUI.hbg.participants || [];
+  const totalPages = Math.max(1, Math.ceil(items.length / COMPACT_PAGE_SIZE));
+  compactUI.hbg.participantPage = Math.min(Math.max(1, compactUI.hbg.participantPage || 1), totalPages);
+  const start = (compactUI.hbg.participantPage - 1) * COMPACT_PAGE_SIZE;
+  const rows = items.slice(start, start + COMPACT_PAGE_SIZE);
+  const html = rows.length ? rows.map((p, index) => `<div class="hbg-participant"><span>${start + index + 1}</span><div><strong>${escapeHtml(p.nama || "-")}</strong><small>${escapeHtml(p.sekolah || "-")}</small></div><b class="status-pill ${String(p.status).toUpperCase() === "HADIR" ? "approved" : "pending"}">${escapeHtml(p.status || "-")}</b></div>`).join("") : `<div class="empty-panel">Belum ada peserta tercatat pada absensi agenda ini.</div>`;
+  const program = compactUI.hbg.participantProgram || {};
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="openHbgDetail('${escapeJs(program.id || "")}')">←</button><div><h3>Daftar Peserta</h3><p class="modal-subtitle">${escapeHtml(program.judulPraktikBaik || program.namaKegiatan || "Hari Belajar Guru")} • ${items.length} tercatat</p></div></div>
+    <div class="compact-list">${html}</div>
+    ${compactPagerHtml(compactUI.hbg.participantPage, totalPages, "changeHbgParticipantPage")}
+  `);
+}
+
+function changeHbgParticipantPage(page) { compactUI.hbg.participantPage = Number(page || 1); renderHbgParticipants(); }
+
+
 /* =========================================================
    FEATURE ROUTER
 ========================================================= */
@@ -4732,6 +5112,16 @@ async function openFeature(name) {
     } else {
       await openAnnouncementPublic();
     }
+    return;
+  }
+
+  if (name === "Hari Belajar Guru" || name === "Hari Belajar") {
+    await openHbgCenter("NEXT");
+    return;
+  }
+
+  if (name === "Bank Praktik Baik" || name === "Praktik Baik") {
+    await openHbgCenter("PRACTICE");
     return;
   }
 
