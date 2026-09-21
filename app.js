@@ -101,6 +101,12 @@
    - Label arus kas dipisahkan dari Bulan Kas
    - Cache versi baru agar data lama tidak tertahan di browser
 
+   PATCH V1.6.1.4:
+   - Tombol tengah bawah menjadi ScanQR khusus Admin/Ketua/Sekretaris/Bendahara
+   - Kartu Digital tetap dibuka melalui tombol Kartu Saya
+   - Scanner dipisahkan dari modul Kehadiran
+   - Kartu menampilkan Kode Absensi cadangan untuk input manual bila QR gagal dibaca
+
    TAMBAHAN V1.6.1.3:
    - Kartu Digital universal untuk semua user aktif
    - Scanner QR tetap terpisah untuk petugas berwenang
@@ -1217,6 +1223,17 @@ function setupRoleInterface() {
       "hidden",
       !(currentUser && (currentUser.role === "Admin" || currentUser.role === "Pengurus"))
     );
+  }
+
+  // V1.6.1.4: tombol tengah bawah menjadi scanner khusus petugas berwenang.
+  // Kartu Digital untuk semua user tetap dibuka dari tombol "Kartu Saya".
+  const qrCenterButton = document.getElementById("qrCenterButton");
+  const qrCenterLabel = document.getElementById("qrCenterLabel");
+  const canScan = canUseQrAttendanceScannerClient();
+  if (qrCenterLabel) qrCenterLabel.textContent = canScan ? "ScanQR" : "QR";
+  if (qrCenterButton) {
+    qrCenterButton.title = canScan ? "Scan QR Absensi" : "Kartu Digital";
+    qrCenterButton.setAttribute("aria-label", canScan ? "Scan QR Absensi" : "Kartu Digital");
   }
 }
 
@@ -2878,7 +2895,6 @@ function renderAttendanceManagerModal() {
     <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
     <h3>Absensi Pertemuan</h3><p class="modal-subtitle"><b>${escapeHtml(agenda.nama || "Agenda Aktif")}</b><br>${escapeHtml(agenda.tanggal || "")} • ${escapeHtml(agenda.jam || "")}</p>
     <div class="compact-counter-strip"><span>Belum <b>${counts.BELUM}</b></span><span>Hadir <b>${counts.HADIR}</b></span><span>Izin/Dinas <b>${counts.IZIN}</b></span></div>
-    ${canUseQrAttendanceScannerClient() ? `<button class="qr-scan-launch" type="button" onclick="openQrAttendanceScanner()"><span>▣</span><div><b>Scan QR Anggota</b><small>Admin, Ketua, Sekretaris, Bendahara</small></div><strong>›</strong></button>` : ""}
     ${compactSearchHtml(compactUI.attendance.query, "filterAttendanceManager", "Cari nama atau sekolah...")}
     <div class="compact-tabs">${compactTabButton("Belum", "BELUM", compactUI.attendance.tab, counts.BELUM, "setAttendanceTab")}${compactTabButton("Hadir", "HADIR", compactUI.attendance.tab, counts.HADIR, "setAttendanceTab")}${compactTabButton("Izin/Dinas", "IZIN", compactUI.attendance.tab, counts.IZIN, "setAttendanceTab")}</div>
     <div class="compact-list">${rows}</div>
@@ -3545,6 +3561,18 @@ async function copyTextToClipboard(value) {
   } catch (e) { showToast("Tidak dapat menyalin. Silakan salin manual."); }
 }
 
+async function copyAttendanceCodeToClipboard(value) {
+  const text = String(value || "").trim();
+  if (!text) { showToast("Kode Absensi belum tersedia."); return; }
+  try {
+    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else {
+      const temp = document.createElement("textarea"); temp.value = text; temp.style.position = "fixed"; temp.style.opacity = "0"; document.body.appendChild(temp); temp.select(); document.execCommand("copy"); temp.remove();
+    }
+    showToast("Kode Absensi disalin.");
+  } catch (e) { showToast("Tidak dapat menyalin. Silakan salin manual."); }
+}
+
 function renderFinanceKasPeriodControls() {
   const f = compactUI.finance;
   const years = f.years && f.years.length ? f.years : [f.tahunAjaran];
@@ -4119,8 +4147,18 @@ function canUseQrAttendanceScannerClient() {
 }
 
 async function openQrCenterAction() {
-  // V1.6.1.3: tombol Kartu Saya selalu membuka kartu milik user yang sedang login.
-  // Scanner tetap tersedia terpisah di modul Kehadiran untuk petugas berwenang.
+  // Compatibility: pemanggilan lama tetap membuka Kartu Digital.
+  await openDigitalMemberCard();
+}
+
+async function openQrBottomAction() {
+  // V1.6.1.4: petugas berwenang memakai tombol tengah untuk scanner.
+  // User lain tetap dapat memakai tombol ini sebagai akses Kartu Digital,
+  // sedangkan akses utama Kartu Digital tetap melalui "Kartu Saya".
+  if (canUseQrAttendanceScannerClient()) {
+    await openQrAttendanceScanner();
+    return;
+  }
   await openDigitalMemberCard();
 }
 
@@ -4173,7 +4211,12 @@ function renderDigitalMemberCard() {
         </div>
       </div>
       <div class="premium-qr-caption"><span></span><b>QR ATTENDANCE</b><span></span></div>
-      <div class="digital-card-qr premium-card-qr"><img src="${escapeHtml(qrUrl)}" alt="QR Anggota KOM 3" onerror="this.classList.add('hidden');document.getElementById('qrFallbackCode').classList.remove('hidden')"><div id="qrFallbackCode" class="qr-fallback-code hidden"><b>QR tidak dapat dimuat</b><small>${escapeHtml(card.memberId)}</small></div></div>
+      <div class="digital-card-qr premium-card-qr"><img src="${escapeHtml(qrUrl)}" alt="QR Anggota KOM 3" onerror="this.classList.add('hidden');document.getElementById('qrFallbackCode').classList.remove('hidden')"><div id="qrFallbackCode" class="qr-fallback-code hidden"><b>QR tidak dapat dimuat</b><small>Gunakan Kode Absensi di bawah</small></div></div>
+      <div class="premium-attendance-code">
+        <small>KODE ABSENSI</small>
+        <strong>${escapeHtml(card.attendanceCode || "-")}</strong>
+        <button type="button" onclick="copyAttendanceCodeToClipboard('${escapeJs(card.attendanceCode || "")}')">Salin</button>
+      </div>
       <div class="premium-card-motto">Learn • Share • Inspire • Grow</div>
       <div class="digital-card-foot premium-card-foot"><span><i></i> STATUS: ${escapeHtml(statusLabel)}</span><span>2026–2029</span></div>
     </div>
@@ -4247,15 +4290,16 @@ async function openQrAttendanceScanner() {
 
 function renderQrAttendanceScanner(agenda) {
   setModalHtml(`
-    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
-    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="stopQrScanner();renderAttendanceManagerModal()">←</button><div><h3>Scan QR Absensi</h3><p class="modal-subtitle">${escapeHtml(agenda.nama || "Agenda Aktif")} • ${escapeHtml(agenda.tanggal || "")}</p></div></div>
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="stopQrScanner();closeModal()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="stopQrScanner();closeModal()">←</button><div><h3>Scan QR Absensi</h3><p class="modal-subtitle">${escapeHtml(agenda.nama || "Agenda Aktif")} • ${escapeHtml(agenda.tanggal || "")}</p></div></div>
     <div class="qr-scanner-shell"><video id="qrScannerVideo" playsinline muted></video><div class="qr-scan-frame"><span></span><span></span><span></span><span></span></div><div id="qrScannerStatus" class="qr-scanner-status">Tekan Mulai Kamera</div></div>
     <div class="qr-scanner-toolbar"><button id="scanSoundToggle" class="scan-sound-toggle ${compactUI.qr.soundEnabled ? "is-on" : ""}" type="button" onclick="toggleScanSound()">${compactUI.qr.soundEnabled ? "🔊 Suara ON" : "🔇 Suara OFF"}</button><span>Bell premium berbunyi setelah absensi tersimpan.</span></div>
     <button id="qrStartButton" class="primary-button" type="button" onclick="startQrScanner()">📷 MULAI KAMERA</button>
     <div class="qr-manual-separator"><span>atau</span></div>
-    <label class="modal-label">Input kode QR manual</label><input id="qrManualInput" class="portal-input" type="text" placeholder="Tempel hasil QR jika kamera tidak didukung">
-    <button class="secondary-button" type="button" onclick="submitManualQrAttendance()">Proses Kode</button>
-    <button class="secondary-button" type="button" onclick="stopQrScanner();renderAttendanceManagerModal()">← Kembali ke Absensi</button>
+    <label class="modal-label">Kode Absensi Manual</label><input id="qrManualInput" class="portal-input qr-manual-code-input" type="text" placeholder="Contoh: K3-A1B2-C3D4-E5F6" autocomplete="off" oninput="this.value=this.value.toUpperCase()">
+    <div class="file-note">Gunakan Kode Absensi yang tercetak di bawah QR pada Kartu Digital jika kamera gagal membaca QR.</div>
+    <button class="secondary-button" type="button" onclick="submitManualQrAttendance()">Proses Kode Absensi</button>
+    <button class="secondary-button" type="button" onclick="stopQrScanner();closeModal()">Tutup Scanner</button>
   `);
 }
 
@@ -4429,7 +4473,7 @@ function playPremiumScanBell(type) {
 
 async function submitManualQrAttendance() {
   const payload = valueOf("qrManualInput");
-  if (!payload) { showToast("Masukkan kode QR terlebih dahulu."); return; }
+  if (!payload) { showToast("Masukkan Kode Absensi terlebih dahulu."); return; }
   await processQrAttendancePayload(payload);
 }
 
