@@ -1,1 +1,14 @@
-
+{
+  "name": "Portal KOM 3 - MGMP Bahasa Inggris SMP Komisariat 3",
+  "short_name": "Portal KOM 3",
+  "description": "Portal MGMP Bahasa Inggris SMP Komisariat 3 Kabupaten Ciamis",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fa",
+  "theme_color": "#0b3154",
+  "lang": "id",
+  "icons": [
+    {"src":"assets/logo.jpg","sizes":"any","type":"image/jpeg","purpose":"any maskable"}
+  ]
+}
