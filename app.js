@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.4.3.2
+   PORTAL KOM 3 - FRONTEND V1.5.0
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -73,6 +73,12 @@
    - Foto Drive tidak perlu dibagikan publik
    - Base64 private hanya dipakai untuk display akun yang sedang login
    - Cache ringan agar foto tidak diambil ulang terus-menerus
+
+   TAMBAHAN V1.5:
+   - Bank Berbagi / Perangkat Pembelajaran
+   - Kontribusi link Drive dari seluruh anggota
+   - Review Admin/Pengurus sebelum terbit
+   - Search + filter + pagination 5 item per halaman
 ========================================================= */
 
 const APP_CONFIG = {
@@ -125,6 +131,11 @@ const compactUI = {
     card: null, stream: null, detector: null, scanning: false, lastPayload: "",
     soundEnabled: localStorage.getItem("kom3_scan_sound") !== "off"
   },
+  bank: {
+    published: [], mine: [], review: [], isManager: false,
+    tab: "BANK", query: "", type: "ALL", kelas: "ALL", semester: "ALL",
+    page: 1, myPage: 1, reviewPage: 1, reviewStatus: "MENUNGGU"
+  },
   portalSettings: null
 };
 
@@ -145,7 +156,7 @@ let profilePhotoLoadPromise = null;
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v1432_cache_";
+const API_CACHE_PREFIX = "kom3_v150_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -170,7 +181,8 @@ const API_READ_TTL = {
   financePublicSummary: 30000,
   myDigitalCard: 300000,
   getMyProfilePhoto: 300000,
-  qrAttendanceContext: 15000
+  qrAttendanceContext: 15000,
+  listLearningResources: 45000
 };
 
 const API_MUTATION_ACTIONS = new Set([
@@ -182,7 +194,8 @@ const API_MUTATION_ACTIONS = new Set([
   "savePortalSettings", "submitKasPayment", "reviewKasPayment",
   "saveFinanceTransaction", "setFinanceTransactionStatus",
   "rotateMyQrToken", "scanAttendanceQr",
-  "resetPasswordWithOtp", "updateProfilePhoto"
+  "resetPasswordWithOtp", "updateProfilePhoto",
+  "submitLearningResource", "reviewLearningResource", "setLearningResourceStatus"
 ]);
 
 const apiMemoryCache = new Map();
@@ -4281,6 +4294,404 @@ function stopQrScanner() {
 }
 
 
+
+/* =========================================================
+   V1.5 - BANK BERBAGI / PERANGKAT PEMBELAJARAN
+========================================================= */
+
+async function openLearningBank(tab = "BANK") {
+  showLoadingModal("Bank Berbagi");
+
+  try {
+    const res = await apiRequest("listLearningResources", { token: sessionToken });
+    if (!res.success) {
+      if (res.sessionExpired) forceLogout();
+      throw new Error(res.message || "Bank Berbagi belum dapat dibuka.");
+    }
+
+    compactUI.bank.published = res.published || [];
+    compactUI.bank.mine = res.mine || [];
+    compactUI.bank.review = res.review || [];
+    compactUI.bank.isManager = !!res.isManager;
+    compactUI.bank.tab = tab === "REVIEW" && !res.isManager ? "BANK" : tab;
+    compactUI.bank.query = "";
+    compactUI.bank.type = "ALL";
+    compactUI.bank.kelas = "ALL";
+    compactUI.bank.semester = "ALL";
+    compactUI.bank.page = 1;
+    compactUI.bank.myPage = 1;
+    compactUI.bank.reviewPage = 1;
+    compactUI.bank.reviewStatus = "MENUNGGU";
+
+    renderLearningBankModal();
+  } catch (err) {
+    showToast(err.message);
+    closeModal();
+  }
+}
+
+
+function learningTypeLabel(type) {
+  const map = {
+    CP_ATP: "CP / ATP",
+    PROTA_PROSEM: "Prota / Prosem",
+    MODUL_AJAR: "Modul Ajar",
+    LKPD: "LKPD",
+    ASESMEN: "Asesmen",
+    MEDIA: "Media Pembelajaran",
+    BAHAN_AJAR: "Bahan Ajar",
+    LAINNYA: "Lainnya"
+  };
+  return map[String(type || "").toUpperCase()] || String(type || "Lainnya");
+}
+
+
+function learningTypeIcon(type) {
+  const map = {
+    CP_ATP: "🧭",
+    PROTA_PROSEM: "🗓️",
+    MODUL_AJAR: "📘",
+    LKPD: "📝",
+    ASESMEN: "✅",
+    MEDIA: "🎬",
+    BAHAN_AJAR: "📚",
+    LAINNYA: "📎"
+  };
+  return map[String(type || "").toUpperCase()] || "📎";
+}
+
+
+function learningStatusLabel(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "MENUNGGU") return "Menunggu Review";
+  if (value === "TERBIT") return "Terbit";
+  if (value === "DITOLAK") return "Ditolak";
+  if (value === "NONAKTIF") return "Nonaktif";
+  return value || "-";
+}
+
+
+function learningStatusClass(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "TERBIT") return "approved";
+  if (value === "MENUNGGU") return "pending";
+  if (value === "DITOLAK") return "rejected";
+  return "neutral";
+}
+
+
+function learningTypeOptions(selected = "ALL", includeAll = true) {
+  const items = [
+    ["CP_ATP", "CP / ATP"],
+    ["PROTA_PROSEM", "Prota / Prosem"],
+    ["MODUL_AJAR", "Modul Ajar"],
+    ["LKPD", "LKPD"],
+    ["ASESMEN", "Asesmen"],
+    ["MEDIA", "Media Pembelajaran"],
+    ["BAHAN_AJAR", "Bahan Ajar"],
+    ["LAINNYA", "Lainnya"]
+  ];
+  let html = includeAll ? `<option value="ALL" ${selected === "ALL" ? "selected" : ""}>Semua Jenis</option>` : "";
+  html += items.map(item => `<option value="${item[0]}" ${selected === item[0] ? "selected" : ""}>${escapeHtml(item[1])}</option>`).join("");
+  return html;
+}
+
+
+function learningClassOptions(selected = "ALL", includeAll = true) {
+  const items = [["7", "Kelas 7"], ["8", "Kelas 8"], ["9", "Kelas 9"], ["UMUM", "Umum"]];
+  let html = includeAll ? `<option value="ALL" ${selected === "ALL" ? "selected" : ""}>Semua Kelas</option>` : "";
+  html += items.map(item => `<option value="${item[0]}" ${selected === item[0] ? "selected" : ""}>${item[1]}</option>`).join("");
+  return html;
+}
+
+
+function learningSemesterOptions(selected = "ALL", includeAll = true) {
+  const items = [["1", "Semester 1"], ["2", "Semester 2"], ["UMUM", "Umum"]];
+  let html = includeAll ? `<option value="ALL" ${selected === "ALL" ? "selected" : ""}>Semua Semester</option>` : "";
+  html += items.map(item => `<option value="${item[0]}" ${selected === item[0] ? "selected" : ""}>${item[1]}</option>`).join("");
+  return html;
+}
+
+
+function learningResourceCardHtml(item, options = {}) {
+  const showStatus = !!options.showStatus;
+  const managerMode = !!options.managerMode;
+  const status = String(item.status || "").toUpperCase();
+  const tags = [
+    `Kelas ${escapeHtml(item.kelas === "UMUM" ? "Umum" : item.kelas || "-")}`,
+    item.semester === "UMUM" ? "Semester Umum" : `Semester ${escapeHtml(item.semester || "-")}`
+  ];
+
+  let managerActions = "";
+  if (managerMode && status === "MENUNGGU") {
+    managerActions = `
+      <button type="button" class="bank-review-button approve" onclick="reviewLearningResource('${escapeJs(item.id)}','APPROVE')">✓ Terbitkan</button>
+      <button type="button" class="bank-review-button reject" onclick="reviewLearningResource('${escapeJs(item.id)}','REJECT')">✕ Tolak</button>`;
+  } else if (managerMode && status === "TERBIT") {
+    managerActions = `<button type="button" class="bank-review-button neutral" onclick="setLearningResourceStatus('${escapeJs(item.id)}','NONAKTIF')">Nonaktifkan</button>`;
+  } else if (managerMode && status === "NONAKTIF") {
+    managerActions = `<button type="button" class="bank-review-button approve" onclick="setLearningResourceStatus('${escapeJs(item.id)}','TERBIT')">Terbitkan lagi</button>`;
+  }
+
+  return `
+    <article class="bank-resource-card">
+      <div class="bank-resource-head">
+        <span class="bank-resource-icon">${learningTypeIcon(item.jenis)}</span>
+        <div class="bank-resource-title">
+          <span>${escapeHtml(learningTypeLabel(item.jenis))}</span>
+          <strong>${escapeHtml(item.judul || "Tanpa Judul")}</strong>
+          <small>${escapeHtml(item.namaGuru || "-")} • ${escapeHtml(item.sekolah || "-")}</small>
+        </div>
+        ${showStatus ? `<span class="status-pill ${learningStatusClass(status)}">${escapeHtml(learningStatusLabel(status))}</span>` : ""}
+      </div>
+      <div class="bank-chip-row">
+        ${tags.map(tag => `<span>${tag}</span>`).join("")}
+        ${item.topik ? `<span>🏷 ${escapeHtml(item.topik)}</span>` : ""}
+      </div>
+      ${item.deskripsi ? `<p class="bank-resource-description">${escapeHtml(item.deskripsi)}</p>` : ""}
+      <div class="bank-resource-meta">Diunggah ${escapeHtml(item.tanggalUpload || "-")}</div>
+      ${item.catatanReview && showStatus ? `<div class="bank-review-note"><b>Catatan review:</b> ${escapeHtml(item.catatanReview)}</div>` : ""}
+      <div class="bank-resource-actions">
+        <button type="button" class="archive-open-button" onclick="openExternalLink('${escapeJs(item.link)}')">🔗 Buka Perangkat</button>
+        ${managerActions}
+      </div>
+    </article>`;
+}
+
+
+function getFilteredLearningPublished_() {
+  const bank = compactUI.bank;
+  const q = String(bank.query || "").toLowerCase();
+
+  return (bank.published || []).filter(item => {
+    if (bank.type !== "ALL" && String(item.jenis).toUpperCase() !== bank.type) return false;
+    if (bank.kelas !== "ALL" && String(item.kelas).toUpperCase() !== bank.kelas) return false;
+    if (bank.semester !== "ALL" && String(item.semester).toUpperCase() !== bank.semester) return false;
+    if (q && ![item.judul, item.topik, item.deskripsi, item.namaGuru, item.sekolah, learningTypeLabel(item.jenis)].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+
+function renderLearningBankModal() {
+  const bank = compactUI.bank;
+  const pendingCount = (bank.review || []).filter(x => String(x.status).toUpperCase() === "MENUNGGU").length;
+  const tabs = `
+    <div class="compact-tabs bank-tabs">
+      ${compactTabButton("Bank Berbagi", "BANK", bank.tab, bank.published.length, "setLearningBankTab")}
+      ${compactTabButton("Kontribusi Saya", "MY", bank.tab, bank.mine.length, "setLearningBankTab")}
+      ${bank.isManager ? compactTabButton("Review", "REVIEW", bank.tab, pendingCount, "setLearningBankTab") : ""}
+    </div>`;
+
+  let content = "";
+  if (bank.tab === "MY") content = renderLearningMineTab_();
+  else if (bank.tab === "REVIEW" && bank.isManager) content = renderLearningReviewTab_();
+  else content = renderLearningPublishedTab_();
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="bank-hero">
+      <div class="bank-hero-icon">📚</div>
+      <div><small>V1.5 • PERANGKAT PEMBELAJARAN</small><h3>Bank Berbagi</h3><p>Berbagi perangkat, saling belajar, dan tumbuh bersama.</p></div>
+    </div>
+    ${tabs}
+    ${content}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+
+function renderLearningPublishedTab_() {
+  const bank = compactUI.bank;
+  const filtered = getFilteredLearningPublished_();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / COMPACT_PAGE_SIZE));
+  bank.page = Math.min(Math.max(1, bank.page || 1), totalPages);
+  const start = (bank.page - 1) * COMPACT_PAGE_SIZE;
+  const rows = filtered.slice(start, start + COMPACT_PAGE_SIZE);
+  const cards = rows.length
+    ? rows.map(item => learningResourceCardHtml(item)).join("")
+    : `<div class="empty-panel">Belum ada perangkat yang sesuai filter.</div>`;
+
+  return `
+    <div class="bank-info-strip"><span>💡</span><p>File tetap disimpan di Drive masing-masing guru. Portal hanya menyimpan link berbagi.</p></div>
+    ${compactSearchHtml(bank.query, "filterLearningBank", "Cari judul, topik, guru, atau sekolah...")}
+    <div class="compact-filter-grid bank-filter-grid">
+      <select class="portal-select" onchange="setLearningBankType(this.value)">${learningTypeOptions(bank.type, true)}</select>
+      <select class="portal-select" onchange="setLearningBankClass(this.value)">${learningClassOptions(bank.kelas, true)}</select>
+      <select class="portal-select" onchange="setLearningBankSemester(this.value)">${learningSemesterOptions(bank.semester, true)}</select>
+    </div>
+    <div class="bank-result-count">${filtered.length} perangkat tersedia</div>
+    <div class="compact-list">${cards}</div>
+    ${compactPagerHtml(bank.page, totalPages, "changeLearningBankPage")}
+  `;
+}
+
+
+function renderLearningMineTab_() {
+  const bank = compactUI.bank;
+  const all = bank.mine || [];
+  const totalPages = Math.max(1, Math.ceil(all.length / COMPACT_PAGE_SIZE));
+  bank.myPage = Math.min(Math.max(1, bank.myPage || 1), totalPages);
+  const start = (bank.myPage - 1) * COMPACT_PAGE_SIZE;
+  const rows = all.slice(start, start + COMPACT_PAGE_SIZE);
+  const cards = rows.length
+    ? rows.map(item => learningResourceCardHtml(item, { showStatus: true })).join("")
+    : `<div class="empty-panel">Anda belum pernah mengirim perangkat.</div>`;
+
+  return `
+    <details class="compact-disclosure bank-submit-box">
+      <summary>＋ Bagikan Perangkat Pembelajaran</summary>
+      <form id="learningResourceForm" class="compact-form" onsubmit="submitLearningResource(event)">
+        <div class="two-col-inputs">
+          <div><label class="modal-label">Jenis</label><select id="learningType" class="portal-select full" required>${learningTypeOptions("MODUL_AJAR", false)}</select></div>
+          <div><label class="modal-label">Kelas</label><select id="learningClass" class="portal-select full" required>${learningClassOptions("9", false)}</select></div>
+        </div>
+        <label class="modal-label">Semester</label><select id="learningSemester" class="portal-select full" required>${learningSemesterOptions("1", false)}</select>
+        <label class="modal-label">Judul Perangkat</label><input id="learningTitle" class="portal-input" type="text" maxlength="150" placeholder="Contoh: Modul Ajar Narrative Text" required>
+        <label class="modal-label">Topik / Materi</label><input id="learningTopic" class="portal-input" type="text" maxlength="100" placeholder="Contoh: Narrative Text, Passive Voice...">
+        <label class="modal-label">Deskripsi Singkat</label><textarea id="learningDescription" class="portal-textarea" rows="3" maxlength="500" placeholder="Jelaskan isi perangkat secara singkat..."></textarea>
+        <label class="modal-label">Link Google Drive / Dokumen</label><input id="learningLink" class="portal-input" type="url" placeholder="https://drive.google.com/..." required>
+        <div class="file-note">Pastikan akses link sudah diatur <b>Viewer / Siapa saja yang memiliki link</b>. File tidak diunggah ke penyimpanan Portal.</div>
+        <button id="learningSubmitButton" type="submit" class="primary-button">KIRIM UNTUK REVIEW</button>
+      </form>
+    </details>
+    <div class="section-mini-title">Riwayat Kontribusi Saya</div>
+    <div class="compact-list">${cards}</div>
+    ${compactPagerHtml(bank.myPage, totalPages, "changeLearningMinePage")}
+  `;
+}
+
+
+function renderLearningReviewTab_() {
+  const bank = compactUI.bank;
+  const status = bank.reviewStatus;
+  const all = (bank.review || []).filter(item => status === "ALL" || String(item.status).toUpperCase() === status);
+  const totalPages = Math.max(1, Math.ceil(all.length / COMPACT_PAGE_SIZE));
+  bank.reviewPage = Math.min(Math.max(1, bank.reviewPage || 1), totalPages);
+  const start = (bank.reviewPage - 1) * COMPACT_PAGE_SIZE;
+  const rows = all.slice(start, start + COMPACT_PAGE_SIZE);
+  const cards = rows.length
+    ? rows.map(item => learningResourceCardHtml(item, { showStatus: true, managerMode: true })).join("")
+    : `<div class="empty-panel">Tidak ada perangkat pada status ini.</div>`;
+
+  return `
+    <div class="bank-manager-note"><span>🛡️</span><p>Review memastikan link dapat dibuka dan perangkat layak dibagikan kepada anggota.</p></div>
+    <select class="portal-select full" onchange="setLearningReviewStatus(this.value)">
+      <option value="MENUNGGU" ${status === "MENUNGGU" ? "selected" : ""}>Menunggu Review</option>
+      <option value="TERBIT" ${status === "TERBIT" ? "selected" : ""}>Terbit</option>
+      <option value="DITOLAK" ${status === "DITOLAK" ? "selected" : ""}>Ditolak</option>
+      <option value="NONAKTIF" ${status === "NONAKTIF" ? "selected" : ""}>Nonaktif</option>
+      <option value="ALL" ${status === "ALL" ? "selected" : ""}>Semua Status</option>
+    </select>
+    <div class="compact-list top-gap-small">${cards}</div>
+    ${compactPagerHtml(bank.reviewPage, totalPages, "changeLearningReviewPage")}
+  `;
+}
+
+
+function setLearningBankTab(tab) {
+  compactUI.bank.tab = tab;
+  compactUI.bank.page = 1;
+  compactUI.bank.myPage = 1;
+  compactUI.bank.reviewPage = 1;
+  renderLearningBankModal();
+}
+
+function filterLearningBank(query) {
+  compactUI.bank.query = query || "";
+  compactUI.bank.page = 1;
+  renderLearningBankModal();
+  refocusCompactSearch();
+}
+
+function setLearningBankType(value) { compactUI.bank.type = value; compactUI.bank.page = 1; renderLearningBankModal(); }
+function setLearningBankClass(value) { compactUI.bank.kelas = value; compactUI.bank.page = 1; renderLearningBankModal(); }
+function setLearningBankSemester(value) { compactUI.bank.semester = value; compactUI.bank.page = 1; renderLearningBankModal(); }
+function changeLearningBankPage(page) { compactUI.bank.page = Number(page || 1); renderLearningBankModal(); }
+function changeLearningMinePage(page) { compactUI.bank.myPage = Number(page || 1); renderLearningBankModal(); }
+function setLearningReviewStatus(value) { compactUI.bank.reviewStatus = value; compactUI.bank.reviewPage = 1; renderLearningBankModal(); }
+function changeLearningReviewPage(page) { compactUI.bank.reviewPage = Number(page || 1); renderLearningBankModal(); }
+
+
+async function submitLearningResource(event) {
+  event.preventDefault();
+  setButtonLoading("learningSubmitButton", true, "Mengirim...");
+
+  try {
+    const res = await apiRequest("submitLearningResource", {
+      token: sessionToken,
+      judul: valueOf("learningTitle"),
+      jenis: valueOf("learningType"),
+      kelas: valueOf("learningClass"),
+      semester: valueOf("learningSemester"),
+      topik: valueOf("learningTopic"),
+      deskripsi: valueOf("learningDescription"),
+      link: valueOf("learningLink")
+    });
+
+    if (!res.success) {
+      if (res.sessionExpired) forceLogout();
+      throw new Error(res.message || "Perangkat belum dapat dikirim.");
+    }
+
+    showToast(res.message);
+    await openLearningBank("MY");
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    setButtonLoading("learningSubmitButton", false, "KIRIM UNTUK REVIEW");
+  }
+}
+
+
+async function reviewLearningResource(id, decision) {
+  const isReject = decision === "REJECT";
+  const message = isReject
+    ? "Tolak perangkat ini?"
+    : "Terbitkan perangkat ini ke Bank Berbagi?";
+
+  if (!confirm(message)) return;
+
+  let catatan = "";
+  if (isReject) {
+    catatan = prompt("Catatan untuk pengirim (opsional):", "") || "";
+  }
+
+  try {
+    const res = await apiRequest("reviewLearningResource", {
+      token: sessionToken,
+      id: id,
+      decision: decision,
+      catatan: catatan
+    });
+    showToast(res.message);
+    if (res.success) await openLearningBank("REVIEW");
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+
+async function setLearningResourceStatus(id, status) {
+  const message = status === "NONAKTIF"
+    ? "Nonaktifkan perangkat ini dari Bank Berbagi?"
+    : "Terbitkan kembali perangkat ini?";
+  if (!confirm(message)) return;
+
+  try {
+    const res = await apiRequest("setLearningResourceStatus", {
+      token: sessionToken,
+      id: id,
+      status: status
+    });
+    showToast(res.message);
+    if (res.success) await openLearningBank("REVIEW");
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+
 /* =========================================================
    FEATURE ROUTER
 ========================================================= */
@@ -4321,6 +4732,11 @@ async function openFeature(name) {
     } else {
       await openAnnouncementPublic();
     }
+    return;
+  }
+
+  if (name === "Bank Berbagi" || name === "Perangkat Pembelajaran" || name === "Perangkat") {
+    await openLearningBank();
     return;
   }
 
