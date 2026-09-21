@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.6.1.5
+   PORTAL KOM 3 - FRONTEND V1.9
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -119,6 +119,14 @@
    - Scanner QR tetap terpisah untuk petugas berwenang
    - Kontribusi Praktik Baik untuk seluruh guru
    - Review Praktik Baik oleh Admin/Pengurus
+
+   TAMBAHAN V1.7:
+   - Sertifikat Digital + QR verifikasi + template + tanda tangan/stempel
+
+   TAMBAHAN V1.8:
+   - Galeri Dokumentasi kegiatan berbasis album/link eksternal
+   - Pusat FLS tahunan: juknis, pendaftaran, hasil, dokumentasi
+   - Admin/Pengurus mengelola; seluruh user aktif dapat melihat
 ========================================================= */
 
 const APP_CONFIG = {
@@ -190,6 +198,9 @@ const compactUI = {
     sources: null, settings: null, participants: [], signatureUpload: null, stampUpload: null,
     issue: { kind: "PESERTA_HBG", sourceId: "", recipientId: "", recipientUserIds: [], template: "GOLD", status: "TERBIT", tanggalTerbit: "", redaksi: "", catatan: "", useSignature: true, useStamp: true }
   },
+  documentation: { published: [], managed: [], years: [], categories: [], isManager: false, tab: "GALLERY", query: "", category: "ALL", year: "ALL", status: "ALL", page: 1, managePage: 1 },
+  fls: { items: [], years: [], isManager: false, tab: "CURRENT", query: "", year: "ALL", status: "ALL", page: 1, managePage: 1 },
+  system: { health: null, lastBackup: null },
   portalSettings: null
 };
 
@@ -199,6 +210,26 @@ let portalWarmupStarted = false;
 let pendingRegisterPhoto = null;
 let pendingProfilePhoto = null;
 let forgotResetState = { identifier: "", maskedEmail: "" };
+let deferredPwaPrompt = null;
+
+
+
+/* =========================================================
+   V1.9 - PWA REGISTRATION
+========================================================= */
+window.addEventListener("beforeinstallprompt", event => {
+  event.preventDefault();
+  deferredPwaPrompt = event;
+});
+window.addEventListener("appinstalled", () => {
+  deferredPwaPrompt = null;
+  try { localStorage.setItem("kom3_pwa_installed", "yes"); } catch (e) {}
+});
+window.addEventListener("load", () => {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js?v=1.9").catch(() => {});
+  }
+});
 
 // V1.4.3.2 - foto profil private hanya hidup pada sesi browser aktif.
 // Data URL tidak ditulis ke sheet dan tidak mengganti PHOTO_URL/PHOTO_FILE_ID.
@@ -211,7 +242,7 @@ let profilePhotoLoadPromise = null;
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v17_cache_";
+const API_CACHE_PREFIX = "kom3_v19_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -239,7 +270,10 @@ const API_READ_TTL = {
   qrAttendanceContext: 15000,
   listLearningResources: 45000,
   listCertificates: 20000,
-  certificateSources: 30000
+  certificateSources: 30000,
+  listDocumentation: 45000,
+  listFlsEvents: 45000,
+  portalHealth: 15000
 };
 
 const API_MUTATION_ACTIONS = new Set([
@@ -255,7 +289,10 @@ const API_MUTATION_ACTIONS = new Set([
   "submitLearningResource", "reviewLearningResource", "setLearningResourceStatus",
   "saveHbgProgram", "setHbgProgramStatus",
   "submitPracticeContribution", "reviewPracticeContribution", "setPracticeContributionStatus",
-  "issueCertificates", "setCertificateStatus", "saveCertificateSettings"
+  "issueCertificates", "setCertificateStatus", "saveCertificateSettings",
+  "saveDocumentation", "setDocumentationStatus",
+  "saveFlsEvent", "setFlsEventStatus",
+  "createPortalBackup"
 ]);
 
 const apiMemoryCache = new Map();
@@ -1350,11 +1387,30 @@ async function openAdminCenter() {
           <span>›</span>
         </button>` : ""}
 
+        <button type="button" class="admin-action" onclick="openDocumentationCenter('MANAGE')">
+          <span class="admin-action-icon">📸</span>
+          <span><b>Dokumentasi Kegiatan</b><small>Album rapat, HBG, FLS, workshop, dan kegiatan lainnya</small></span>
+          <span>›</span>
+        </button>
+
+        <button type="button" class="admin-action" onclick="openFlsCenter('MANAGE')">
+          <span class="admin-action-icon">🏅</span>
+          <span><b>FLS</b><small>Info tahunan, juknis, pendaftaran, hasil, dan dokumentasi</small></span>
+          <span>›</span>
+        </button>
+
         <button type="button" class="admin-action" onclick="openMeetingArchive()">
           <span class="admin-action-icon">🗂️</span>
           <span><b>Arsip Rapat & Materi</b><small>Arsip per kegiatan, tidak menumpuk panjang</small></span>
           <span>›</span>
         </button>
+
+        ${currentUser.role === "Admin" ? `
+        <button type="button" class="admin-action" onclick="openSystemHealth()">
+          <span class="admin-action-icon">🛡️</span>
+          <span><b>Backup & System Health</b><small>Pemeriksaan sheet, PWA, dan backup database manual</small></span>
+          <span>›</span>
+        </button>` : ""}
 
         ${settingButton}
       </div>
@@ -6101,6 +6157,162 @@ async function openPublicCertificateVerification(verifyToken) {
 }
 
 
+
+
+/* =========================================================
+   V1.8 - DOKUMENTASI & FLS
+========================================================= */
+
+async function openDocumentationCenter(tab = "GALLERY") {
+  showLoadingModal("Dokumentasi Kegiatan");
+  try {
+    const res = await apiRequest("listDocumentation", { token: sessionToken });
+    if (!res.success) throw new Error(res.message || "Dokumentasi belum dapat dimuat.");
+    const d = compactUI.documentation;
+    d.published = res.published || [];
+    d.managed = res.managed || [];
+    d.years = res.years || [];
+    d.categories = res.categories || [];
+    d.isManager = !!res.isManager;
+    d.tab = tab === "MANAGE" && d.isManager ? "MANAGE" : "GALLERY";
+    d.query = ""; d.category = "ALL"; d.year = "ALL"; d.status = "ALL"; d.page = 1; d.managePage = 1;
+    renderDocumentationCenter();
+  } catch (err) { showToast(err.message); closeModal(); }
+}
+
+function renderDocumentationCenter() {
+  const d = compactUI.documentation;
+  const source = d.tab === "MANAGE" && d.isManager ? d.managed : d.published;
+  const q = String(d.query || "").toLowerCase().trim();
+  const filtered = source.filter(item => {
+    if (d.category !== "ALL" && item.kategori !== d.category) return false;
+    if (d.year !== "ALL" && item.tahunAjaran !== d.year) return false;
+    if (d.tab === "MANAGE" && d.status !== "ALL" && item.status !== d.status) return false;
+    if (!q) return true;
+    return [item.judul,item.deskripsi,item.kategori,item.tahunAjaran].join(" ").toLowerCase().includes(q);
+  });
+  const pageKey = d.tab === "MANAGE" ? "managePage" : "page";
+  const totalPages = Math.max(1, Math.ceil(filtered.length / COMPACT_PAGE_SIZE));
+  d[pageKey] = Math.min(Math.max(1,d[pageKey]||1),totalPages);
+  const start = (d[pageKey]-1)*COMPACT_PAGE_SIZE;
+  const rows = filtered.slice(start,start+COMPACT_PAGE_SIZE);
+
+  const categoryOptions = [`<option value="ALL">Semua Kategori</option>`].concat((d.categories||[]).map(c=>`<option value="${escapeHtml(c)}" ${d.category===c?"selected":""}>${escapeHtml(documentationCategoryLabel(c))}</option>`)).join("");
+  const yearOptions = [`<option value="ALL">Semua Tahun Ajaran</option>`].concat((d.years||[]).map(y=>`<option value="${escapeHtml(y)}" ${d.year===y?"selected":""}>${escapeHtml(y)}</option>`)).join("");
+  const statusFilter = d.tab === "MANAGE" ? `<select class="portal-select full" onchange="setDocumentationStatusFilter(this.value)"><option value="ALL">Semua Status</option><option value="DRAFT" ${d.status==="DRAFT"?"selected":""}>Draft</option><option value="TERBIT" ${d.status==="TERBIT"?"selected":""}>Terbit</option><option value="NONAKTIF" ${d.status==="NONAKTIF"?"selected":""}>Nonaktif</option></select>` : "";
+  const cards = rows.length ? rows.map(item => documentationCardHtml(item, d.tab === "MANAGE")).join("") : `<div class="empty-panel">Belum ada dokumentasi pada filter ini.</div>`;
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="documentation-hero"><div class="documentation-hero-icon">📸</div><div><small>V1.8 • GALERI KOM 3</small><h3>Dokumentasi Kegiatan</h3><p>Album rapat, Hari Belajar Guru, FLS, workshop, lomba, dan kegiatan lainnya.</p></div></div>
+    <div class="compact-tabs">${compactTabButton("Galeri","GALLERY",d.tab,d.published.length,"setDocumentationTab")}${d.isManager?compactTabButton("Kelola","MANAGE",d.tab,d.managed.length,"setDocumentationTab"):""}</div>
+    ${d.tab==="MANAGE"&&d.isManager?`<div class="documentation-manager-bar"><button class="primary-button" type="button" onclick="openDocumentationEditor('')">＋ TAMBAH DOKUMENTASI</button></div>`:""}
+    <input class="portal-input compact-search" type="search" placeholder="Cari judul atau kegiatan..." value="${escapeHtml(d.query)}" oninput="filterDocumentation(this.value)">
+    <div class="compact-filter-grid"><select class="portal-select full" onchange="setDocumentationCategory(this.value)">${categoryOptions}</select><select class="portal-select full" onchange="setDocumentationYear(this.value)">${yearOptions}</select>${statusFilter}</div>
+    <div class="compact-list documentation-list">${cards}</div>
+    ${compactPagerHtml(d[pageKey],totalPages,"changeDocumentationPage")}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function documentationCardHtml(item, managerMode=false) {
+  const cover = item.coverUrl && isSafePortalImageUrl(item.coverUrl) ? `<img class="documentation-cover" src="${escapeHtml(item.coverUrl)}" alt="Cover dokumentasi">` : `<div class="documentation-cover documentation-cover-placeholder">📷</div>`;
+  const manage = managerMode ? `<div class="hbg-card-actions"><button class="bank-review-button neutral" type="button" onclick="openDocumentationEditor('${escapeJs(item.id)}')">✎ Edit</button>${item.status!=="TERBIT"?`<button class="bank-review-button approve" type="button" onclick="setDocumentationStatus('${escapeJs(item.id)}','TERBIT')">Terbitkan</button>`:""}${item.status!=="NONAKTIF"?`<button class="bank-review-button reject" type="button" onclick="setDocumentationStatus('${escapeJs(item.id)}','NONAKTIF')">Nonaktifkan</button>`:""}</div>` : "";
+  return `<article class="documentation-card">${cover}<div class="documentation-body"><div class="documentation-meta"><span>${escapeHtml(documentationCategoryLabel(item.kategori))}</span><span>${escapeHtml(item.tahunAjaran||"-")}</span>${managerMode?`<span>${escapeHtml(item.status)}</span>`:""}</div><strong>${escapeHtml(item.judul||"Dokumentasi Kegiatan")}</strong><small>${escapeHtml(item.tanggal||"-")}</small><p>${escapeHtml(item.deskripsi||"")}</p><div class="hbg-card-actions">${item.albumUrl?`<button class="archive-open-button" type="button" onclick="openExternalLink('${escapeJs(item.albumUrl)}')">🖼️ Buka Album</button>`:""}${item.videoUrl?`<button class="bank-review-button neutral" type="button" onclick="openExternalLink('${escapeJs(item.videoUrl)}')">▶ Video</button>`:""}</div>${manage}</div></article>`;
+}
+
+function documentationCategoryLabel(v){ const m={RAPAT:"Rapat MGMP",HBG:"Hari Belajar Guru",FLS:"FLS",WORKSHOP:"Workshop",LOMBA:"Lomba",LAINNYA:"Lainnya"}; return m[String(v||"").toUpperCase()]||v||"Lainnya"; }
+function setDocumentationTab(v){ compactUI.documentation.tab=v; compactUI.documentation.page=1; compactUI.documentation.managePage=1; renderDocumentationCenter(); }
+function filterDocumentation(v){ compactUI.documentation.query=v||""; compactUI.documentation.page=1; compactUI.documentation.managePage=1; renderDocumentationCenter(); refocusCompactSearch(); }
+function setDocumentationCategory(v){ compactUI.documentation.category=v||"ALL"; compactUI.documentation.page=1; compactUI.documentation.managePage=1; renderDocumentationCenter(); }
+function setDocumentationYear(v){ compactUI.documentation.year=v||"ALL"; compactUI.documentation.page=1; compactUI.documentation.managePage=1; renderDocumentationCenter(); }
+function setDocumentationStatusFilter(v){ compactUI.documentation.status=v||"ALL"; compactUI.documentation.managePage=1; renderDocumentationCenter(); }
+function changeDocumentationPage(v){ const d=compactUI.documentation; if(d.tab==="MANAGE") d.managePage=Number(v||1); else d.page=Number(v||1); renderDocumentationCenter(); }
+
+function openDocumentationEditor(id="") {
+  const d=compactUI.documentation;
+  if(!d.isManager) return showToast("Menu ini khusus Admin/Pengurus.");
+  const item=(d.managed||[]).find(x=>String(x.id)===String(id))||null;
+  const year=(item&&item.tahunAjaran)||((d.years||[])[0]||"");
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="renderDocumentationCenter()">×</button>
+    <div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderDocumentationCenter()">←</button><div><h3>${item?"Edit":"Tambah"} Dokumentasi</h3><p class="modal-subtitle">Portal menyimpan metadata + link, bukan seluruh foto/video.</p></div></div>
+    <form id="documentationForm" class="compact-form" onsubmit="saveDocumentationFromForm(event,'${escapeJs(id)}')">
+      <div class="form-grid-2"><div><label class="modal-label">Tahun Ajaran</label><select id="docYear" class="portal-select full">${(d.years||[]).map(y=>`<option value="${escapeHtml(y)}" ${y===year?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select></div><div><label class="modal-label">Kategori</label><select id="docCategory" class="portal-select full">${(d.categories||[]).map(c=>`<option value="${c}" ${item&&item.kategori===c?"selected":""}>${escapeHtml(documentationCategoryLabel(c))}</option>`).join("")}</select></div></div>
+      <label class="modal-label">Judul</label><input id="docTitle" class="portal-input" maxlength="160" value="${escapeHtml(item?item.judul:"")}" required>
+      <label class="modal-label">Tanggal Kegiatan</label><input id="docDate" class="portal-input" type="date" value="${escapeHtml(item?item.tanggalInput:localDateInputValue())}" required>
+      <label class="modal-label">Deskripsi</label><textarea id="docDescription" class="portal-textarea" rows="3" maxlength="1000">${escapeHtml(item?item.deskripsi:"")}</textarea>
+      <label class="modal-label">Cover <span class="optional-label">opsional</span></label><input id="docCover" class="portal-input" value="${escapeHtml(item?item.coverUrl:"")}" placeholder="assets/... atau https://...">
+      <label class="modal-label">Link Album Google Drive / Google Photos</label><input id="docAlbum" class="portal-input" type="url" value="${escapeHtml(item?item.albumUrl:"")}" placeholder="https://...">
+      <label class="modal-label">Link Video <span class="optional-label">opsional</span></label><input id="docVideo" class="portal-input" type="url" value="${escapeHtml(item?item.videoUrl:"")}" placeholder="https://youtube.com/...">
+      <label class="modal-label">Status</label><select id="docStatus" class="portal-select full"><option value="DRAFT" ${!item||item.status==="DRAFT"?"selected":""}>Draft</option><option value="TERBIT" ${item&&item.status==="TERBIT"?"selected":""}>Terbit</option><option value="NONAKTIF" ${item&&item.status==="NONAKTIF"?"selected":""}>Nonaktif</option></select>
+      <button id="docSaveButton" class="primary-button" type="submit">SIMPAN DOKUMENTASI</button>
+    </form>`);
+}
+
+async function saveDocumentationFromForm(event,id){ event.preventDefault(); setButtonLoading("docSaveButton",true,"Menyimpan..."); try{ const res=await apiRequest("saveDocumentation",{token:sessionToken,id:id,tahunAjaran:valueOf("docYear"),kategori:valueOf("docCategory"),judul:valueOf("docTitle"),tanggal:valueOf("docDate"),deskripsi:valueOf("docDescription"),coverUrl:valueOf("docCover"),albumUrl:valueOf("docAlbum"),videoUrl:valueOf("docVideo"),status:valueOf("docStatus")}); showToast(res.message); if(res.success) await openDocumentationCenter("MANAGE"); }catch(err){showToast(err.message);}finally{setButtonLoading("docSaveButton",false,"SIMPAN DOKUMENTASI");}}
+async function setDocumentationStatus(id,status){ if(!confirm(`Ubah status dokumentasi menjadi ${status}?`)) return; try{ const res=await apiRequest("setDocumentationStatus",{token:sessionToken,id,status}); showToast(res.message); if(res.success) await openDocumentationCenter("MANAGE"); }catch(err){showToast(err.message);} }
+
+async function openFlsCenter(tab="CURRENT") {
+  showLoadingModal("FLS");
+  try {
+    const res=await apiRequest("listFlsEvents",{token:sessionToken});
+    if(!res.success) throw new Error(res.message||"Data FLS belum dapat dimuat.");
+    const f=compactUI.fls; f.items=res.items||[]; f.years=res.years||[]; f.isManager=!!res.isManager; f.tab=tab==="MANAGE"&&f.isManager?"MANAGE":(tab==="HISTORY"?"HISTORY":"CURRENT"); f.query=""; f.year="ALL"; f.status="ALL"; f.page=1; f.managePage=1; renderFlsCenter();
+  } catch(err){ showToast(err.message); closeModal(); }
+}
+
+function renderFlsCenter(){
+  const f=compactUI.fls; const q=String(f.query||"").toLowerCase().trim();
+  let source=(f.items||[]).filter(item=>{ if(f.tab==="CURRENT" && ["SELESAI","BATAL"].includes(item.status)) return false; if(f.tab==="HISTORY" && item.status!=="SELESAI") return false; if(f.tab==="MANAGE"&&f.status!=="ALL"&&item.status!==f.status) return false; if(f.year!=="ALL"&&item.tahunAjaran!==f.year) return false; if(!q) return true; return [item.judul,item.tema,item.lokasi,item.tahun,item.tahunAjaran].join(" ").toLowerCase().includes(q); });
+  const key=f.tab==="MANAGE"?"managePage":"page"; const totalPages=Math.max(1,Math.ceil(source.length/COMPACT_PAGE_SIZE)); f[key]=Math.min(Math.max(1,f[key]||1),totalPages); const rows=source.slice((f[key]-1)*COMPACT_PAGE_SIZE,f[key]*COMPACT_PAGE_SIZE);
+  const yearOptions=[`<option value="ALL">Semua Tahun Ajaran</option>`].concat((f.years||[]).map(y=>`<option value="${escapeHtml(y)}" ${f.year===y?"selected":""}>${escapeHtml(y)}</option>`)).join("");
+  const statusFilter=f.tab==="MANAGE"?`<select class="portal-select full" onchange="setFlsStatusFilter(this.value)"><option value="ALL">Semua Status</option>${["RENCANA","PENDAFTARAN","BERLANGSUNG","SELESAI","BATAL"].map(x=>`<option value="${x}" ${f.status===x?"selected":""}>${flsStatusLabel(x)}</option>`).join("")}</select>`:"";
+  setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><div class="fls-hero"><div class="fls-hero-icon">🏅</div><div><small>V1.8 • EVENT TAHUNAN</small><h3>FLS Komisariat 3</h3><p>Informasi, juknis, pendaftaran, hasil, dan dokumentasi FLS.</p></div></div><div class="compact-tabs">${compactTabButton("Terkini","CURRENT",f.tab,"","setFlsTab")}${compactTabButton("Riwayat","HISTORY",f.tab,"","setFlsTab")}${f.isManager?compactTabButton("Kelola","MANAGE",f.tab,"","setFlsTab"):""}</div>${f.tab==="MANAGE"&&f.isManager?`<div class="documentation-manager-bar"><button class="primary-button" type="button" onclick="openFlsEditor('')">＋ TAMBAH FLS</button></div>`:""}<input class="portal-input compact-search" type="search" placeholder="Cari FLS, tema, lokasi..." value="${escapeHtml(f.query)}" oninput="filterFls(this.value)"><div class="compact-filter-grid"><select class="portal-select full" onchange="setFlsYear(this.value)">${yearOptions}</select>${statusFilter}</div><div class="compact-list">${rows.length?rows.map(x=>flsCardHtml(x,f.tab==="MANAGE")).join(""):`<div class="empty-panel">Belum ada data FLS pada bagian ini.</div>`}</div>${compactPagerHtml(f[key],totalPages,"changeFlsPage")}<button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>`);
+}
+
+function flsCardHtml(item,managerMode=false){
+  const manage=managerMode?`<div class="hbg-card-actions"><button class="bank-review-button neutral" type="button" onclick="openFlsEditor('${escapeJs(item.id)}')">✎ Edit</button>${item.status!=="SELESAI"?`<button class="bank-review-button approve" type="button" onclick="setFlsStatus('${escapeJs(item.id)}','SELESAI')">Selesai</button>`:""}${item.status!=="BATAL"?`<button class="bank-review-button reject" type="button" onclick="setFlsStatus('${escapeJs(item.id)}','BATAL')">Batal</button>`:""}</div>`:"";
+  return `<article class="fls-card"><div class="fls-year-badge">${escapeHtml(item.tahun||"FLS")}</div><div class="fls-card-main"><div class="documentation-meta"><span>${escapeHtml(flsStatusLabel(item.status))}</span><span>${escapeHtml(item.tahunAjaran||"-")}</span></div><strong>${escapeHtml(item.judul||"FLS Komisariat 3")}</strong>${item.tema?`<em>${escapeHtml(item.tema)}</em>`:""}<small>📅 ${escapeHtml(item.tanggalMulai||"-")}${item.tanggalSelesai?` – ${escapeHtml(item.tanggalSelesai)}`:""}</small><small>📍 ${escapeHtml(item.lokasi||"Belum ditentukan")}</small><p>${escapeHtml(item.deskripsi||"")}</p><div class="hbg-card-actions">${item.linkJuknis?`<button class="archive-open-button" type="button" onclick="openExternalLink('${escapeJs(item.linkJuknis)}')">📘 Juknis</button>`:""}${item.linkPendaftaran?`<button class="bank-review-button approve" type="button" onclick="openExternalLink('${escapeJs(item.linkPendaftaran)}')">📝 Daftar</button>`:""}${item.linkHasil?`<button class="bank-review-button neutral" type="button" onclick="openExternalLink('${escapeJs(item.linkHasil)}')">🏆 Hasil</button>`:""}${item.linkDokumentasi?`<button class="bank-review-button neutral" type="button" onclick="openExternalLink('${escapeJs(item.linkDokumentasi)}')">📸 Dokumentasi</button>`:""}</div>${manage}</div></article>`;
+}
+
+function flsStatusLabel(v){const m={RENCANA:"Rencana",PENDAFTARAN:"Pendaftaran",BERLANGSUNG:"Berlangsung",SELESAI:"Selesai",BATAL:"Batal"};return m[String(v||"").toUpperCase()]||v||"Rencana";}
+function setFlsTab(v){compactUI.fls.tab=v;compactUI.fls.page=1;compactUI.fls.managePage=1;renderFlsCenter();}
+function filterFls(v){compactUI.fls.query=v||"";compactUI.fls.page=1;compactUI.fls.managePage=1;renderFlsCenter();refocusCompactSearch();}
+function setFlsYear(v){compactUI.fls.year=v||"ALL";compactUI.fls.page=1;compactUI.fls.managePage=1;renderFlsCenter();}
+function setFlsStatusFilter(v){compactUI.fls.status=v||"ALL";compactUI.fls.managePage=1;renderFlsCenter();}
+function changeFlsPage(v){const f=compactUI.fls;if(f.tab==="MANAGE")f.managePage=Number(v||1);else f.page=Number(v||1);renderFlsCenter();}
+
+function openFlsEditor(id=""){
+  const f=compactUI.fls;if(!f.isManager)return showToast("Menu ini khusus Admin/Pengurus."); const item=(f.items||[]).find(x=>String(x.id)===String(id))||null; const year=(item&&item.tahunAjaran)||((f.years||[])[0]||""); const calendarYear=(item&&item.tahun)||String(new Date().getFullYear());
+  setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="renderFlsCenter()">×</button><div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderFlsCenter()">←</button><div><h3>${item?"Edit":"Tambah"} FLS</h3><p class="modal-subtitle">FLS tahunan Komisariat 3.</p></div></div><form id="flsForm" class="compact-form" onsubmit="saveFlsFromForm(event,'${escapeJs(id)}')"><div class="form-grid-2"><div><label class="modal-label">Tahun FLS</label><input id="flsYearValue" class="portal-input" inputmode="numeric" maxlength="4" value="${escapeHtml(calendarYear)}" required></div><div><label class="modal-label">Tahun Ajaran</label><select id="flsAcademicYear" class="portal-select full">${(f.years||[]).map(y=>`<option value="${escapeHtml(y)}" ${y===year?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select></div></div><label class="modal-label">Judul</label><input id="flsTitle" class="portal-input" maxlength="160" value="${escapeHtml(item?item.judul:"FLS Komisariat 3")}" required><label class="modal-label">Tema <span class="optional-label">opsional</span></label><input id="flsTheme" class="portal-input" maxlength="200" value="${escapeHtml(item?item.tema:"")}"><div class="form-grid-2"><div><label class="modal-label">Tanggal Mulai</label><input id="flsStart" class="portal-input" type="date" value="${escapeHtml(item?item.tanggalMulaiInput:"")}" required></div><div><label class="modal-label">Tanggal Selesai</label><input id="flsEnd" class="portal-input" type="date" value="${escapeHtml(item?item.tanggalSelesaiInput:"")}"></div></div><label class="modal-label">Lokasi</label><input id="flsLocation" class="portal-input" maxlength="180" value="${escapeHtml(item?item.lokasi:"")}"><label class="modal-label">Deskripsi</label><textarea id="flsDescription" class="portal-textarea" rows="3" maxlength="1500">${escapeHtml(item?item.deskripsi:"")}</textarea><label class="modal-label">Link Juknis</label><input id="flsGuide" class="portal-input" type="url" value="${escapeHtml(item?item.linkJuknis:"")}" placeholder="https://..."><label class="modal-label">Link Pendaftaran</label><input id="flsRegistration" class="portal-input" type="url" value="${escapeHtml(item?item.linkPendaftaran:"")}" placeholder="https://..."><label class="modal-label">Link Hasil</label><input id="flsResult" class="portal-input" type="url" value="${escapeHtml(item?item.linkHasil:"")}" placeholder="https://..."><label class="modal-label">Link Dokumentasi</label><input id="flsDocumentation" class="portal-input" type="url" value="${escapeHtml(item?item.linkDokumentasi:"")}" placeholder="https://..."><label class="modal-label">Status</label><select id="flsStatus" class="portal-select full">${["RENCANA","PENDAFTARAN","BERLANGSUNG","SELESAI","BATAL"].map(x=>`<option value="${x}" ${item&&item.status===x?"selected":(!item&&x==="RENCANA"?"selected":"")}>${flsStatusLabel(x)}</option>`).join("")}</select><button id="flsSaveButton" class="primary-button" type="submit">SIMPAN FLS</button></form>`);
+}
+
+async function saveFlsFromForm(event,id){event.preventDefault();setButtonLoading("flsSaveButton",true,"Menyimpan...");try{const res=await apiRequest("saveFlsEvent",{token:sessionToken,id:id,tahun:valueOf("flsYearValue"),tahunAjaran:valueOf("flsAcademicYear"),judul:valueOf("flsTitle"),tema:valueOf("flsTheme"),tanggalMulai:valueOf("flsStart"),tanggalSelesai:valueOf("flsEnd"),lokasi:valueOf("flsLocation"),deskripsi:valueOf("flsDescription"),linkJuknis:valueOf("flsGuide"),linkPendaftaran:valueOf("flsRegistration"),linkHasil:valueOf("flsResult"),linkDokumentasi:valueOf("flsDocumentation"),status:valueOf("flsStatus")});showToast(res.message);if(res.success)await openFlsCenter("MANAGE");}catch(err){showToast(err.message);}finally{setButtonLoading("flsSaveButton",false,"SIMPAN FLS");}}
+async function setFlsStatus(id,status){if(!confirm(`Ubah status FLS menjadi ${flsStatusLabel(status)}?`))return;try{const res=await apiRequest("setFlsEventStatus",{token:sessionToken,id,status});showToast(res.message);if(res.success)await openFlsCenter("MANAGE");}catch(err){showToast(err.message);}}
+
+
+
+
+/* =========================================================
+   V1.9 - SYSTEM HEALTH / BACKUP / PWA
+========================================================= */
+async function openSystemHealth(){
+  if(!currentUser||currentUser.role!=="Admin") return showToast("Menu ini khusus Admin.");
+  showLoadingModal("Backup & System Health");
+  try{const res=await apiRequest("portalHealth",{token:sessionToken}); if(!res.success) throw new Error(res.message||"Pemeriksaan sistem gagal."); compactUI.system.health=res; renderSystemHealth();}catch(err){showToast(err.message);closeModal();}
+}
+function renderSystemHealth(){
+  const h=compactUI.system.health||{}; const ready=!!navigator.serviceWorker; const installed=window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches;
+  const rows=(h.sheets||[]).map(x=>`<div class="system-health-row"><span>${x.ok?"✅":"❌"}</span><div><strong>${escapeHtml(x.name)}</strong><small>${x.ok?`${Number(x.rows||0)} baris data`:"Sheet belum tersedia"}</small></div></div>`).join("");
+  const backup=compactUI.system.lastBackup;
+  setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button><div class="system-health-hero"><div>🛡️</div><section><small>V1.9 • FINALISASI</small><h3>Backup & System Health</h3><p>${h.healthy?"Semua komponen database utama terdeteksi.":"Ada komponen database yang perlu diperiksa."}</p></section></div><div class="profile-data-grid"><div><small>VERSI</small><strong>${escapeHtml(h.version||"1.9")}</strong></div><div><small>TIMEZONE</small><strong>${escapeHtml(h.timezone||"-")}</strong></div><div><small>CEK TERAKHIR</small><strong>${escapeHtml(h.checkedAt||"-")}</strong></div><div><small>PWA</small><strong>${installed?"Terpasang":(ready?"Siap":"Tidak didukung")}</strong></div></div><div class="section-mini-title top-gap">Database</div><div class="system-health-list">${rows}</div><div class="section-mini-title top-gap">Pemeliharaan</div><button id="backupPortalButton" class="primary-button" type="button" onclick="createPortalBackup()">💾 BUAT BACKUP DATABASE</button>${deferredPwaPrompt&&!installed?`<button class="secondary-button" type="button" onclick="installPortalPwa()">📲 INSTALL PORTAL DI PERANGKAT</button>`:""}<button class="secondary-button" type="button" onclick="clearPortalLocalCache()">🧹 Bersihkan Cache Lokal</button>${backup?`<div class="backup-success-card"><strong>Backup terakhir</strong><span>${escapeHtml(backup.name||"")}</span><small>${escapeHtml(backup.createdAt||"")}</small>${backup.url?`<button class="outline-button" type="button" onclick="openExternalLink('${escapeJs(backup.url)}')">Buka Backup</button>`:""}</div>`:""}<button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>`);
+}
+async function createPortalBackup(){setButtonLoading("backupPortalButton",true,"Membuat backup...");try{const res=await apiRequest("createPortalBackup",{token:sessionToken});showToast(res.message);if(res.success){compactUI.system.lastBackup=res;const health=await apiRequest("portalHealth",{token:sessionToken});if(health.success)compactUI.system.health=health;renderSystemHealth();}}catch(err){showToast(err.message);}finally{const b=document.getElementById("backupPortalButton");if(b)setButtonLoading("backupPortalButton",false,"💾 BUAT BACKUP DATABASE");}}
+async function installPortalPwa(){if(!deferredPwaPrompt){showToast("Gunakan menu browser → Install app / Tambahkan ke layar utama.");return;}deferredPwaPrompt.prompt();try{await deferredPwaPrompt.userChoice;}catch(e){}deferredPwaPrompt=null;renderSystemHealth();}
+async function clearPortalLocalCache(){try{apiMemoryCache.clear();Object.keys(localStorage).filter(k=>k.startsWith("kom3_v")&&k.includes("cache")).forEach(k=>localStorage.removeItem(k));if("caches" in window){const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith("kom3-pwa-")).map(k=>caches.delete(k)));}showToast("Cache lokal dibersihkan. Muat ulang Portal untuk data terbaru.");}catch(err){showToast("Cache lokal belum dapat dibersihkan.");}}
+
+
 async function openFeature(name) {
   if (name === "Kehadiran Saya" || name === "Kehadiran") {
     if (currentUser && (currentUser.role === "Admin" || currentUser.role === "Pengurus")) {
@@ -6152,6 +6364,16 @@ async function openFeature(name) {
 
   if (name === "Bank Berbagi" || name === "Perangkat Pembelajaran" || name === "Perangkat") {
     await openLearningBank();
+    return;
+  }
+
+  if (name === "Dokumentasi" || name === "Dokumentasi Kegiatan") {
+    await openDocumentationCenter("GALLERY");
+    return;
+  }
+
+  if (name === "FLS" || name === "Festival Literasi Sekolah") {
+    await openFlsCenter("CURRENT");
     return;
   }
 
