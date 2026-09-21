@@ -3239,3 +3239,93 @@ button:disabled {
 ========================================================= */
 .bank-payment-box{margin:10px 0;padding:14px;border:1px solid #dce6ee;border-radius:18px;background:#f8fbfd}.bank-account-list{display:grid;gap:8px;margin-top:10px}.bank-account-card{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;border:1px solid #e1e8ef;border-radius:14px;background:#fff}.bank-account-card div{min-width:0}.bank-account-card small,.bank-account-card strong,.bank-account-card span{display:block}.bank-account-card small{font-size:10px;font-weight:800;color:#0b5d8f}.bank-account-card strong{margin:2px 0;font-size:15px;letter-spacing:.03em;color:#173148}.bank-account-card span{font-size:10px;color:#748694}.copy-bank-button{border:1px solid #c7d7e3;background:#fff;color:#0b5d8f;border-radius:10px;padding:7px 10px;font-size:10px;font-weight:800;cursor:pointer;flex:0 0 auto}.kas-confirm-main{margin-top:10px}.kas-history-card.is-unpaid{opacity:.82}.bank-setting-card{margin:8px 0 12px;padding:12px;border:1px solid #e1e8ef;border-radius:16px;background:#f8fafc}.bank-setting-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.bank-setting-head strong{font-size:12px;color:#173148}.compact-select{width:auto!important;min-width:110px}.member-payment-note{margin:9px 0;padding:9px 10px;border-left:3px solid #d7ba50;border-radius:8px;background:#fff9e7}.member-payment-note small{display:block;color:#806917;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.member-payment-note p{margin:3px 0 0;font-size:11px;color:#43515e}.treasurer-period-box{margin:10px 0;padding:10px;border:1px solid #dbe5ed;border-radius:14px;background:#f6f9fc}.treasurer-period-box>small{display:block;margin-bottom:7px;font-size:9px;font-weight:800;color:#607587;text-transform:uppercase;letter-spacing:.08em}.verified-period-note{margin:8px 0;padding:9px 10px;border-radius:12px;background:#f4f8fb}.verified-period-note small,.verified-period-note strong,.verified-period-note span{display:block}.verified-period-note small{font-size:9px;color:#748694}.verified-period-note strong{font-size:11px;color:#173148;margin-top:2px}.verified-period-note span{font-size:9px;color:#82909b;margin-top:3px}.finance-period-filter{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:0 0 12px;padding:11px;border:1px solid #e0e8ef;border-radius:16px;background:#f8fbfd}.finance-period-note{margin:0 0 12px;padding:9px 11px;border-radius:12px;background:#fff8dc;color:#755f12;font-size:10px;line-height:1.45}.kas-review-meta{display:flex;flex-wrap:wrap;gap:6px 10px}.kas-review-meta span{font-size:9px;color:#6e808e}
 @media(max-width:520px){.finance-period-filter{grid-template-columns:1fr}.bank-account-card{align-items:flex-start}.bank-account-card strong{font-size:14px}}
+
+
+/* =========================================================
+   V1.6.1.2 - PAYMENT CHANNEL STATUS
+========================================================= */
+.payment-channel-status{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  margin:10px 0 14px;
+  padding:10px;
+  border:1px solid #e0e8ef;
+  border-radius:14px;
+  background:#f7fafc;
+}
+.payment-channel-status span{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:5px 9px;
+  border-radius:999px;
+  font-size:9px;
+  font-weight:850;
+  line-height:1.2;
+}
+.payment-channel-status .is-active{
+  background:#eaf8f0;
+  border:1px solid #bfe8ce;
+  color:#17633a;
+}
+.payment-channel-status .is-off{
+  background:#f2f5f7;
+  border:1px solid #dbe3e9;
+  color:#687986;
+}
+
+
+/* =========================================================
+   V1.6.1.3 - UNIVERSAL CARD + PRACTICE CONTRIBUTION
+========================================================= */
+.practice-subtabs {
+  margin-top: 10px;
+  margin-bottom: 12px;
+}
+
+.practice-source-wrap {
+  position: relative;
+}
+
+.practice-source-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 9px;
+  margin: 0 0 6px 2px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+
+.practice-source-badge.official {
+  background: #eaf2fb;
+  color: #12355b;
+  border: 1px solid #ccdaea;
+}
+
+.practice-source-badge.community {
+  background: #fff7df;
+  color: #7a5a00;
+  border: 1px solid #ecd58a;
+}
+
+.practice-contribution-card .practice-source-badge {
+  margin: 0 0 8px 0;
+}
+
+.practice-summary {
+  margin: 10px 0;
+  color: #4e6178;
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .practice-subtabs {
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+}
