@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.6.1.1
+   PORTAL KOM 3 - FRONTEND V1.6.1.3
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -100,6 +100,12 @@
    - 12 bulan lintas Jul–Jun pada setiap Tahun Ajaran
    - Label arus kas dipisahkan dari Bulan Kas
    - Cache versi baru agar data lama tidak tertahan di browser
+
+   TAMBAHAN V1.6.1.3:
+   - Kartu Digital universal untuk semua user aktif
+   - Scanner QR tetap terpisah untuk petugas berwenang
+   - Kontribusi Praktik Baik untuk seluruh guru
+   - Review Praktik Baik oleh Admin/Pengurus
 ========================================================= */
 
 const APP_CONFIG = {
@@ -158,9 +164,12 @@ const compactUI = {
     page: 1, myPage: 1, reviewPage: 1, reviewStatus: "MENUNGGU"
   },
   hbg: {
-    items: [], agendas: [], isManager: false, defaultYear: "",
+    items: [], agendas: [], isManager: false, defaultYear: "", years: [],
     tab: "NEXT", query: "", year: "ALL", manageStatus: "ALL", page: 1,
-    participants: [], participantPage: 1, participantProgram: null
+    participants: [], participantPage: 1, participantProgram: null,
+    practicePublished: [], practiceMine: [], practiceReview: [],
+    practiceTab: "BANK", practicePage: 1, practiceMyPage: 1,
+    practiceReviewPage: 1, practiceReviewStatus: "MENUNGGU"
   },
   portalSettings: null
 };
@@ -182,7 +191,7 @@ let profilePhotoLoadPromise = null;
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v1611_cache_";
+const API_CACHE_PREFIX = "kom3_v1613_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -222,7 +231,8 @@ const API_MUTATION_ACTIONS = new Set([
   "rotateMyQrToken", "scanAttendanceQr",
   "resetPasswordWithOtp", "updateProfilePhoto",
   "submitLearningResource", "reviewLearningResource", "setLearningResourceStatus",
-  "saveHbgProgram", "setHbgProgramStatus"
+  "saveHbgProgram", "setHbgProgramStatus",
+  "submitPracticeContribution", "reviewPracticeContribution", "setPracticeContributionStatus"
 ]);
 
 const apiMemoryCache = new Map();
@@ -3135,10 +3145,36 @@ async function openKasSaya(tahunAjaran = "") {
 }
 
 
+function activePortalBankAccountsClient_(settings) {
+  const source = (settings && settings.bankAccounts) || [];
+  return source.filter(item =>
+    String(item.status || "NONAKTIF").toUpperCase() === "AKTIF" &&
+    String(item.bank || "").trim() &&
+    String(item.number || "").trim() &&
+    String(item.holder || "").trim()
+  );
+}
+
+
+function paymentChannelStatusSummaryHtml_(settings) {
+  const s = settings || {};
+  const qrisOn = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
+  const activeBanks = activePortalBankAccountsClient_(s);
+  const bankText = activeBanks.length
+    ? activeBanks.map(x => x.bank).join(", ")
+    : "Tidak ada rekening aktif";
+
+  return `<div class="payment-channel-status">
+    <span class="${qrisOn ? "is-active" : "is-off"}">QRIS: ${qrisOn ? "AKTIF" : "NONAKTIF"}</span>
+    <span class="${activeBanks.length ? "is-active" : "is-off"}">Transfer: ${escapeHtml(bankText)}</span>
+  </div>`;
+}
+
+
 function renderKasSayaModal() {
   const s = compactUI.portalSettings || {};
   const qrisActive = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
-  const banks = (s.bankAccounts || []).filter(x => String(x.status || "AKTIF").toUpperCase() === "AKTIF" && x.bank && x.number);
+  const banks = activePortalBankAccountsClient_(s);
   const latestByPeriod = latestKasPaymentsByPeriod((compactUI.kas.payments || []).filter(x => String(x.tahunAjaran || x.tahunAjaranDiajukan || "") === compactUI.kas.tahunAjaran));
   const periods = compactUI.kas.periods || [];
   const history = periods.map(p => latestByPeriod[p.value] || ({ id: "", periode: p.value, periodeLabel: p.label, tahunAjaran: compactUI.kas.tahunAjaran, nominal: Number(s.kasMonthly || 5000), status: "BELUM_BAYAR" }));
@@ -3218,7 +3254,7 @@ function openKasConfirmation(preferredPeriod = "") {
   const s = compactUI.portalSettings || {};
   const years = compactUI.kas.years || [compactUI.kas.tahunAjaran];
   const selectedYear = compactUI.kas.tahunAjaran || years[0] || "";
-  const banks = (s.bankAccounts || []).filter(x => String(x.status || "AKTIF").toUpperCase() === "AKTIF" && x.bank && x.number);
+  const banks = activePortalBankAccountsClient_(s);
   const qrisActive = String(s.qrisStatus || "").toUpperCase() === "AKTIF" && isSafePortalImageUrl(s.qrisImageUrl);
   const methods = [];
   if (qrisActive) methods.push("QRIS");
@@ -3546,11 +3582,11 @@ function openQrisImage(url) {
    PORTAL SETTINGS ADMIN
 ------------------------- */
 
-async function openPortalSettings() {
+async function openPortalSettings(forceFresh = false) {
   if (!currentUser || currentUser.role !== "Admin") { showToast("Pengaturan Portal khusus Admin."); return; }
   showLoadingModal("Pengaturan Portal");
   try {
-    const res = await apiRequest("portalSettings", { token: sessionToken });
+    const res = forceFresh ? await performApiRequest_("portalSettings", { token: sessionToken }) : await apiRequest("portalSettings", { token: sessionToken });
     if (!res.success) { showToast(res.message); closeModal(); return; }
     const s = res.settings || {};
     compactUI.portalSettings = s;
@@ -3558,6 +3594,7 @@ async function openPortalSettings() {
     setModalHtml(`
       <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
       <h3>Pengaturan Portal</h3><p class="modal-subtitle">Jadwal salat, Kas, QRIS, dan rekening transfer KOM 3.</p>
+      ${paymentChannelStatusSummaryHtml_(s)}
       <form id="portalSettingsForm" class="manager-form compact-form" onsubmit="savePortalSettingsFromModal(event)">
         <div class="section-mini-title">Jadwal Salat</div>
         <label class="modal-label">Status</label><select id="settingPrayerStatus" class="portal-select full"><option value="AKTIF" ${String(s.prayerStatus).toUpperCase() === "AKTIF" ? "selected" : ""}>Aktif</option><option value="NONAKTIF" ${String(s.prayerStatus).toUpperCase() === "NONAKTIF" ? "selected" : ""}>Nonaktif</option></select>
@@ -3580,28 +3617,63 @@ async function openPortalSettings() {
 async function savePortalSettingsFromModal(event) {
   event.preventDefault();
   setButtonLoading("portalSettingsSaveButton", true, "Menyimpan...");
+
   try {
+    const qrisStatus = document.getElementById("settingQrisStatus").value;
+    const qrisImageUrl = valueOf("settingQrisImage");
     const bankAccounts = [1,2,3].map(i => ({
       status: document.getElementById(`settingBankStatus${i}`).value,
       bank: valueOf(`settingBankName${i}`),
       number: valueOf(`settingBankNumber${i}`),
       holder: valueOf(`settingBankHolder${i}`)
     }));
+
+    if (String(qrisStatus).toUpperCase() === "AKTIF" && !isSafePortalImageUrl(qrisImageUrl)) {
+      showToast("QRIS aktif membutuhkan gambar QRIS HTTPS atau assets/...");
+      return;
+    }
+
+    const incompleteBank = bankAccounts.find((item, index) =>
+      String(item.status).toUpperCase() === "AKTIF" &&
+      (!String(item.bank || "").trim() || !String(item.number || "").trim() || !String(item.holder || "").trim())
+    );
+
+    if (incompleteBank) {
+      const index = bankAccounts.indexOf(incompleteBank) + 1;
+      showToast(`Rekening ${index} aktif: nama bank, nomor rekening, dan atas nama wajib diisi.`);
+      return;
+    }
+
     const res = await apiRequest("savePortalSettings", {
       token: sessionToken,
       prayerStatus: document.getElementById("settingPrayerStatus").value,
       prayerAddress: valueOf("settingPrayerAddress"),
       kasMonthly: valueOf("settingKasMonthly"),
       qrisName: valueOf("settingQrisName"),
-      qrisImageUrl: valueOf("settingQrisImage"),
-      qrisStatus: document.getElementById("settingQrisStatus").value,
+      qrisImageUrl,
+      qrisStatus,
       tahunAjaran: valueOf("settingAcademicYear"),
       bankAccounts
     });
-    showToast(res.message);
-    if (res.success) { prayerWidgetData = null; await loadPrayerWidget(); await openPortalSettings(); }
-  } catch (err) { showToast(err.message); }
-  finally { setButtonLoading("portalSettingsSaveButton", false, "SIMPAN PENGATURAN"); }
+
+    if (!res.success) {
+      showToast(res.message || "Pengaturan belum berhasil disimpan.");
+      return;
+    }
+
+    // Mutation sudah menghapus cache browser. Pakai payload hasil verifikasi backend
+    // lalu buka ulang secara fresh agar status AKTIF/NONAKTIF terlihat persis seperti di Sheet.
+    if (res.settings) compactUI.portalSettings = res.settings;
+    clearApiReadCache();
+    prayerWidgetData = null;
+    showToast(res.message || "Pengaturan berhasil disimpan.");
+    await loadPrayerWidget();
+    await openPortalSettings(true);
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    setButtonLoading("portalSettingsSaveButton", false, "SIMPAN PENGATURAN");
+  }
 }
 
 
@@ -4047,11 +4119,9 @@ function canUseQrAttendanceScannerClient() {
 }
 
 async function openQrCenterAction() {
-  if (canUseQrAttendanceScannerClient()) {
-    await openQrAttendanceScanner();
-  } else {
-    await openDigitalMemberCard();
-  }
+  // V1.6.1.3: tombol Kartu Saya selalu membuka kartu milik user yang sedang login.
+  // Scanner tetap tersedia terpisah di modul Kehadiran untuk petugas berwenang.
+  await openDigitalMemberCard();
 }
 
 
@@ -4107,7 +4177,7 @@ function renderDigitalMemberCard() {
       <div class="premium-card-motto">Learn • Share • Inspire • Grow</div>
       <div class="digital-card-foot premium-card-foot"><span><i></i> STATUS: ${escapeHtml(statusLabel)}</span><span>2026–2029</span></div>
     </div>
-    <div class="qr-security-note">Tunjukkan QR ini kepada petugas saat absensi. Scanner hanya dapat digunakan oleh Admin, Ketua, Sekretaris, atau Bendahara pada agenda aktif.</div>
+    <div class="qr-security-note">Tunjukkan QR ini kepada petugas saat absensi. Scanner QR tetap tersedia terpisah di menu Kehadiran untuk petugas yang berwenang.</div>
     <button class="secondary-button" type="button" onclick="rotateDigitalMemberQr()">Perbarui QR Saya</button>
     <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
   `);
@@ -4777,7 +4847,7 @@ async function setLearningResourceStatus(id, status) {
    V1.6 - HARI BELAJAR GURU & PRAKTIK BAIK
 ========================================================= */
 
-async function openHbgCenter(tab = "NEXT") {
+async function openHbgCenter(tab = "NEXT", practiceTab = "BANK") {
   showLoadingModal(tab === "PRACTICE" ? "Bank Praktik Baik" : "Hari Belajar Guru");
 
   try {
@@ -4790,14 +4860,24 @@ async function openHbgCenter(tab = "NEXT") {
     const allowedTabs = ["NEXT", "PRACTICE", "HISTORY", "MANAGE"];
     compactUI.hbg.items = res.items || [];
     compactUI.hbg.agendas = res.agendas || [];
+    compactUI.hbg.practicePublished = res.practicePublished || [];
+    compactUI.hbg.practiceMine = res.practiceMine || [];
+    compactUI.hbg.practiceReview = res.practiceReview || [];
     compactUI.hbg.isManager = !!res.isManager;
     compactUI.hbg.defaultYear = res.defaultYear || "";
+    compactUI.hbg.years = res.availableYears || [];
     compactUI.hbg.tab = allowedTabs.includes(tab) ? tab : "NEXT";
     if (compactUI.hbg.tab === "MANAGE" && !compactUI.hbg.isManager) compactUI.hbg.tab = "NEXT";
     compactUI.hbg.query = "";
     compactUI.hbg.year = "ALL";
     compactUI.hbg.manageStatus = "ALL";
     compactUI.hbg.page = 1;
+    compactUI.hbg.practiceTab = ["BANK", "MY", "REVIEW"].includes(practiceTab) ? practiceTab : "BANK";
+    if (compactUI.hbg.practiceTab === "REVIEW" && !compactUI.hbg.isManager) compactUI.hbg.practiceTab = "BANK";
+    compactUI.hbg.practicePage = 1;
+    compactUI.hbg.practiceMyPage = 1;
+    compactUI.hbg.practiceReviewPage = 1;
+    compactUI.hbg.practiceReviewStatus = "MENUNGGU";
     renderHbgCenter();
   } catch (err) {
     showToast(err.message);
@@ -4835,7 +4915,15 @@ function hbgModeLabel(mode) {
 
 
 function hbgYearOptions(selected = "ALL") {
-  const years = Array.from(new Set((compactUI.hbg.items || []).map(x => String(x.tahunAjaran || "").trim()).filter(Boolean)));
+  const hbg = compactUI.hbg;
+  const allYearItems = []
+    .concat(hbg.items || [])
+    .concat(hbg.practicePublished || [])
+    .concat(hbg.practiceMine || [])
+    .concat(hbg.practiceReview || []);
+  const years = Array.from(new Set(
+    (hbg.years || []).concat(allYearItems.map(x => String(x.tahunAjaran || "").trim())).filter(Boolean)
+  ));
   if (compactUI.hbg.defaultYear && !years.includes(compactUI.hbg.defaultYear)) years.push(compactUI.hbg.defaultYear);
   years.sort().reverse();
   return `<option value="ALL" ${selected === "ALL" ? "selected" : ""}>Semua Tahun</option>` +
@@ -4873,7 +4961,7 @@ function hbgCounts_() {
   const items = compactUI.hbg.items || [];
   return {
     next: items.filter(x => ["RENCANA", "AKTIF"].includes(String(x.status).toUpperCase())).length,
-    practice: items.filter(x => String(x.status).toUpperCase() === "SELESAI").length,
+    practice: items.filter(x => String(x.status).toUpperCase() === "SELESAI").length + (compactUI.hbg.practicePublished || []).length,
     history: items.filter(x => ["SELESAI", "BATAL"].includes(String(x.status).toUpperCase())).length,
     manage: items.length
   };
@@ -4883,6 +4971,12 @@ function hbgCounts_() {
 function renderHbgCenter() {
   const hbg = compactUI.hbg;
   const counts = hbgCounts_();
+
+  if (hbg.tab === "PRACTICE") {
+    renderPracticeBankCenter_();
+    return;
+  }
+
   const items = hbgTabItems_(hbg.tab);
   const totalPages = Math.max(1, Math.ceil(items.length / COMPACT_PAGE_SIZE));
   hbg.page = Math.min(Math.max(1, hbg.page || 1), totalPages);
@@ -4935,6 +5029,241 @@ function renderHbgCenter() {
 }
 
 
+function practiceStatusLabel_(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "MENUNGGU") return "MENUNGGU";
+  if (value === "TERBIT") return "TERBIT";
+  if (value === "DITOLAK") return "DITOLAK";
+  if (value === "NONAKTIF") return "NONAKTIF";
+  return value || "-";
+}
+
+function practiceStatusClass_(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "TERBIT") return "approved";
+  if (value === "MENUNGGU") return "pending";
+  if (value === "DITOLAK") return "rejected";
+  return "neutral";
+}
+
+function setPracticeSubTab(tab) {
+  const hbg = compactUI.hbg;
+  if (tab === "REVIEW" && !hbg.isManager) tab = "BANK";
+  hbg.practiceTab = tab;
+  hbg.practicePage = 1;
+  hbg.practiceMyPage = 1;
+  hbg.practiceReviewPage = 1;
+  renderPracticeBankCenter_();
+}
+
+function setPracticeReviewStatus(status) {
+  compactUI.hbg.practiceReviewStatus = status || "MENUNGGU";
+  compactUI.hbg.practiceReviewPage = 1;
+  renderPracticeBankCenter_();
+}
+
+function changePracticePage(page) { compactUI.hbg.practicePage = Number(page || 1); renderPracticeBankCenter_(); }
+function changePracticeMyPage(page) { compactUI.hbg.practiceMyPage = Number(page || 1); renderPracticeBankCenter_(); }
+function changePracticeReviewPage(page) { compactUI.hbg.practiceReviewPage = Number(page || 1); renderPracticeBankCenter_(); }
+
+function practiceYearInputOptions_(selected) {
+  const optionsHtml = hbgYearOptions(selected || compactUI.hbg.defaultYear || "ALL");
+  return optionsHtml.replace(/<option value="ALL"[^>]*>Semua Tahun<\/option>/, "");
+}
+
+function practiceContributionMatches_(item, q, year) {
+  if (year !== "ALL" && String(item.tahunAjaran || "") !== year) return false;
+  if (!q) return true;
+  return [item.judul, item.topik, item.ringkasan, item.namaGuru, item.sekolah, item.tahunAjaran]
+    .join(" ").toLowerCase().includes(q);
+}
+
+function renderPracticeBankCenter_() {
+  const hbg = compactUI.hbg;
+  const counts = hbgCounts_();
+  const pendingReview = (hbg.practiceReview || []).filter(x => String(x.status || "").toUpperCase() === "MENUNGGU").length;
+
+  let content = "";
+  if (hbg.practiceTab === "MY") content = renderPracticeMineTab_();
+  else if (hbg.practiceTab === "REVIEW" && hbg.isManager) content = renderPracticeReviewTab_();
+  else content = renderPracticePublishedTab_();
+
+  setModalHtml(`
+    <div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+    <div class="hbg-hero">
+      <div class="hbg-hero-icon">🎓</div>
+      <div><small>V1.6.1.3 • PENGEMBANGAN GURU</small><h3>Hari Belajar Guru</h3><p>Giliran berbagi, praktik baik, materi, dan rekam kegiatan Komisariat 3.</p></div>
+    </div>
+
+    <div class="compact-tabs hbg-tabs">
+      ${compactTabButton("Berikutnya", "NEXT", hbg.tab, counts.next, "setHbgTab")}
+      ${compactTabButton("Praktik Baik", "PRACTICE", hbg.tab, counts.practice, "setHbgTab")}
+      ${compactTabButton("Riwayat", "HISTORY", hbg.tab, counts.history, "setHbgTab")}
+      ${hbg.isManager ? compactTabButton("Kelola", "MANAGE", hbg.tab, counts.manage, "setHbgTab") : ""}
+    </div>
+
+    <div class="compact-tabs bank-tabs practice-subtabs">
+      ${compactTabButton("Bank Praktik Baik", "BANK", hbg.practiceTab, counts.practice, "setPracticeSubTab")}
+      ${compactTabButton("Kontribusi Saya", "MY", hbg.practiceTab, (hbg.practiceMine || []).length, "setPracticeSubTab")}
+      ${hbg.isManager ? compactTabButton("Review", "REVIEW", hbg.practiceTab, pendingReview, "setPracticeSubTab") : ""}
+    </div>
+
+    ${content}
+    <button class="secondary-button" type="button" onclick="closeModal()">Tutup</button>
+  `);
+}
+
+function renderPracticePublishedTab_() {
+  const hbg = compactUI.hbg;
+  const q = String(hbg.query || "").toLowerCase().trim();
+  const official = hbgTabItems_("PRACTICE").map(item => ({ source: "HBG", sortDate: item.tanggalInput || "", item }));
+  const contributed = (hbg.practicePublished || [])
+    .filter(item => practiceContributionMatches_(item, q, hbg.year))
+    .map(item => ({ source: "CONTRIBUTION", sortDate: item.tanggalInput || "", item }));
+  const merged = official.concat(contributed).sort((a,b) => String(b.sortDate).localeCompare(String(a.sortDate)));
+  const totalPages = Math.max(1, Math.ceil(merged.length / COMPACT_PAGE_SIZE));
+  hbg.practicePage = Math.min(Math.max(1, hbg.practicePage || 1), totalPages);
+  const start = (hbg.practicePage - 1) * COMPACT_PAGE_SIZE;
+  const rows = merged.slice(start, start + COMPACT_PAGE_SIZE);
+  const cards = rows.length ? rows.map(row => row.source === "HBG" ? practiceOfficialCardHtml_(row.item) : practiceContributionCardHtml_(row.item, { bankMode: true })).join("") : `<div class="empty-panel">Belum ada praktik baik yang diterbitkan.</div>`;
+
+  return `
+    <input class="portal-input compact-search" type="search" placeholder="Cari judul, guru, sekolah, atau topik..." value="${escapeHtml(hbg.query)}" oninput="filterHbg(this.value)">
+    <div class="compact-filter-grid hbg-filter-grid"><select class="portal-select full" onchange="setHbgYear(this.value)">${hbgYearOptions(hbg.year)}</select></div>
+    <div class="hbg-result-count">${merged.length} praktik baik ditemukan</div>
+    <div class="compact-list">${cards}</div>
+    ${compactPagerHtml(hbg.practicePage, totalPages, "changePracticePage")}
+  `;
+}
+
+function renderPracticeMineTab_() {
+  const hbg = compactUI.hbg;
+  const all = hbg.practiceMine || [];
+  const totalPages = Math.max(1, Math.ceil(all.length / COMPACT_PAGE_SIZE));
+  hbg.practiceMyPage = Math.min(Math.max(1, hbg.practiceMyPage || 1), totalPages);
+  const start = (hbg.practiceMyPage - 1) * COMPACT_PAGE_SIZE;
+  const rows = all.slice(start, start + COMPACT_PAGE_SIZE);
+  const cards = rows.length ? rows.map(item => practiceContributionCardHtml_(item, { showStatus: true })).join("") : `<div class="empty-panel">Anda belum pernah mengirim Praktik Baik.</div>`;
+  const defaultYear = hbg.defaultYear || "2026/2027";
+
+  return `
+    <details class="compact-disclosure bank-submit-box" open>
+      <summary>＋ Bagikan Praktik Baik</summary>
+      <form id="practiceContributionForm" class="compact-form" onsubmit="submitPracticeContribution(event)">
+        <label class="modal-label">Tahun Ajaran</label><select id="practiceYear" class="portal-select full" required>${practiceYearInputOptions_(defaultYear)}</select>
+        <label class="modal-label">Judul Praktik Baik</label><input id="practiceTitle" class="portal-input" type="text" maxlength="180" placeholder="Contoh: Vocabulary Game untuk Meningkatkan Keaktifan" required>
+        <label class="modal-label">Topik / Fokus</label><input id="practiceTopic" class="portal-input" type="text" maxlength="120" placeholder="Contoh: Vocabulary, Speaking, Classroom Management">
+        <label class="modal-label">Ringkasan</label><textarea id="practiceSummary" class="portal-textarea" rows="4" maxlength="1200" placeholder="Tuliskan masalah, strategi yang dilakukan, dan hasil singkat..." required></textarea>
+        <label class="modal-label">Link Materi <span class="optional-label">opsional</span></label><input id="practiceMaterialLink" class="portal-input" type="url" placeholder="https://drive.google.com/...">
+        <label class="modal-label">Link Video <span class="optional-label">opsional</span></label><input id="practiceVideoLink" class="portal-input" type="url" placeholder="https://youtube.com/... atau link Drive">
+        <div class="file-note">Isi minimal salah satu link Materi atau Video. File tetap di Drive/YouTube pemilik dan tidak memakai penyimpanan Portal.</div>
+        <button id="practiceSubmitButton" type="submit" class="primary-button">KIRIM UNTUK REVIEW</button>
+      </form>
+    </details>
+    <div class="section-mini-title">Riwayat Kontribusi Saya</div>
+    <div class="compact-list">${cards}</div>
+    ${compactPagerHtml(hbg.practiceMyPage, totalPages, "changePracticeMyPage")}
+  `;
+}
+
+function renderPracticeReviewTab_() {
+  const hbg = compactUI.hbg;
+  const status = hbg.practiceReviewStatus || "MENUNGGU";
+  const all = (hbg.practiceReview || []).filter(item => status === "ALL" || String(item.status || "").toUpperCase() === status);
+  const totalPages = Math.max(1, Math.ceil(all.length / COMPACT_PAGE_SIZE));
+  hbg.practiceReviewPage = Math.min(Math.max(1, hbg.practiceReviewPage || 1), totalPages);
+  const start = (hbg.practiceReviewPage - 1) * COMPACT_PAGE_SIZE;
+  const rows = all.slice(start, start + COMPACT_PAGE_SIZE);
+  const cards = rows.length ? rows.map(item => practiceContributionCardHtml_(item, { showStatus: true, managerMode: true })).join("") : `<div class="empty-panel">Tidak ada Praktik Baik pada status ini.</div>`;
+
+  return `
+    <div class="bank-manager-note"><span>🛡️</span><p>Review memastikan isi dan link dapat dibuka sebelum Praktik Baik diterbitkan untuk seluruh guru.</p></div>
+    <select class="portal-select full" onchange="setPracticeReviewStatus(this.value)">
+      <option value="MENUNGGU" ${status === "MENUNGGU" ? "selected" : ""}>Menunggu Review</option>
+      <option value="TERBIT" ${status === "TERBIT" ? "selected" : ""}>Terbit</option>
+      <option value="DITOLAK" ${status === "DITOLAK" ? "selected" : ""}>Ditolak</option>
+      <option value="NONAKTIF" ${status === "NONAKTIF" ? "selected" : ""}>Nonaktif</option>
+      <option value="ALL" ${status === "ALL" ? "selected" : ""}>Semua Status</option>
+    </select>
+    <div class="compact-list top-gap">${cards}</div>
+    ${compactPagerHtml(hbg.practiceReviewPage, totalPages, "changePracticeReviewPage")}
+  `;
+}
+
+function practiceOfficialCardHtml_(item) {
+  return `<div class="practice-source-wrap"><div class="practice-source-badge official">HBG RESMI</div>${hbgCardHtml_(item, false)}</div>`;
+}
+
+function practiceContributionCardHtml_(item, options = {}) {
+  const status = String(item.status || "").toUpperCase();
+  const showStatus = !!options.showStatus || !!options.managerMode;
+  let managerActions = "";
+  if (options.managerMode) {
+    if (status === "MENUNGGU") {
+      managerActions = `<div class="review-buttons"><button class="approve-button" type="button" onclick="reviewPracticeContribution('${escapeJs(item.id)}','APPROVE')">✓ Terbitkan</button><button class="reject-button" type="button" onclick="reviewPracticeContribution('${escapeJs(item.id)}','REJECT')">✕ Tolak</button></div>`;
+    } else if (status === "TERBIT") {
+      managerActions = `<button class="secondary-button compact-secondary" type="button" onclick="setPracticeContributionStatus('${escapeJs(item.id)}','NONAKTIF')">Nonaktifkan</button>`;
+    } else if (status === "NONAKTIF") {
+      managerActions = `<button class="secondary-button compact-secondary" type="button" onclick="setPracticeContributionStatus('${escapeJs(item.id)}','TERBIT')">Terbitkan Kembali</button>`;
+    }
+  }
+
+  return `<article class="hbg-card practice-contribution-card">
+    <div class="practice-source-badge community">KONTRIBUSI GURU</div>
+    <div class="hbg-card-top">
+      <div class="hbg-card-title"><small>${escapeHtml(item.tahunAjaran || "-")}${item.topik ? " • " + escapeHtml(item.topik) : ""}</small><strong>${escapeHtml(item.judul || "Praktik Baik")}</strong><p>${escapeHtml(item.namaGuru || "-")} • ${escapeHtml(item.sekolah || "-")}</p></div>
+      ${showStatus ? `<span class="status-pill ${practiceStatusClass_(status)}">${escapeHtml(practiceStatusLabel_(status))}</span>` : ""}
+    </div>
+    <p class="practice-summary">${escapeHtml(item.ringkasan || "-")}</p>
+    <div class="hbg-card-meta">Dikirim ${escapeHtml(item.tanggalKirim || "-")}</div>
+    <div class="hbg-card-actions">${item.linkMateri ? `<button class="bank-review-button neutral" type="button" onclick="openExternalLink('${escapeJs(item.linkMateri)}')">📚 Materi</button>` : ""}${item.linkVideo ? `<button class="bank-review-button neutral" type="button" onclick="openExternalLink('${escapeJs(item.linkVideo)}')">▶ Video</button>` : ""}</div>
+    ${item.catatanReview ? `<div class="member-payment-note"><small>Catatan Review</small><p>${escapeHtml(item.catatanReview)}</p></div>` : ""}
+    ${managerActions}
+  </article>`;
+}
+
+async function submitPracticeContribution(event) {
+  event.preventDefault();
+  setButtonLoading("practiceSubmitButton", true, "Mengirim...");
+  try {
+    const res = await apiRequest("submitPracticeContribution", {
+      token: sessionToken,
+      tahunAjaran: valueOf("practiceYear"),
+      judul: valueOf("practiceTitle"),
+      topik: valueOf("practiceTopic"),
+      ringkasan: valueOf("practiceSummary"),
+      linkMateri: valueOf("practiceMaterialLink"),
+      linkVideo: valueOf("practiceVideoLink")
+    });
+    showToast(res.message);
+    if (res.success) await openHbgCenter("PRACTICE", "MY");
+  } catch (err) { showToast(err.message); }
+  finally { setButtonLoading("practiceSubmitButton", false, "KIRIM UNTUK REVIEW"); }
+}
+
+async function reviewPracticeContribution(id, decision) {
+  const isReject = decision === "REJECT";
+  const message = isReject ? "Tolak Praktik Baik ini?" : "Terbitkan Praktik Baik ini ke Bank Praktik Baik?";
+  if (!confirm(message)) return;
+  const catatan = isReject ? (prompt("Catatan untuk pengirim (opsional):", "") || "") : "";
+  try {
+    const res = await apiRequest("reviewPracticeContribution", { token: sessionToken, id, decision, catatan });
+    showToast(res.message);
+    if (res.success) await openHbgCenter("PRACTICE", "REVIEW");
+  } catch (err) { showToast(err.message); }
+}
+
+async function setPracticeContributionStatus(id, status) {
+  const message = status === "NONAKTIF" ? "Nonaktifkan Praktik Baik ini dari Bank Praktik Baik?" : "Terbitkan kembali Praktik Baik ini?";
+  if (!confirm(message)) return;
+  try {
+    const res = await apiRequest("setPracticeContributionStatus", { token: sessionToken, id, status });
+    showToast(res.message);
+    if (res.success) await openHbgCenter("PRACTICE", "REVIEW");
+  } catch (err) { showToast(err.message); }
+}
+
+
 function hbgCardHtml_(item, managerMode = false) {
   const a = item.attendance || { hadir: 0, total: 0 };
   const status = String(item.status || "").toUpperCase();
@@ -4964,9 +5293,9 @@ function hbgCardHtml_(item, managerMode = false) {
 }
 
 
-function setHbgTab(tab) { compactUI.hbg.tab = tab; compactUI.hbg.page = 1; renderHbgCenter(); }
-function filterHbg(value) { compactUI.hbg.query = value || ""; compactUI.hbg.page = 1; renderHbgCenter(); refocusCompactSearch(); }
-function setHbgYear(value) { compactUI.hbg.year = value || "ALL"; compactUI.hbg.page = 1; renderHbgCenter(); }
+function setHbgTab(tab) { compactUI.hbg.tab = tab; compactUI.hbg.page = 1; compactUI.hbg.practicePage = 1; renderHbgCenter(); }
+function filterHbg(value) { compactUI.hbg.query = value || ""; compactUI.hbg.page = 1; compactUI.hbg.practicePage = 1; renderHbgCenter(); refocusCompactSearch(); }
+function setHbgYear(value) { compactUI.hbg.year = value || "ALL"; compactUI.hbg.page = 1; compactUI.hbg.practicePage = 1; renderHbgCenter(); }
 function setHbgManageStatus(value) { compactUI.hbg.manageStatus = value || "ALL"; compactUI.hbg.page = 1; renderHbgCenter(); }
 function changeHbgPage(page) { compactUI.hbg.page = Number(page || 1); renderHbgCenter(); }
 
