@@ -1,5 +1,5 @@
 /* =========================================================
-   PORTAL KOM 3 - FRONTEND V1.9
+   PORTAL KOM 3 - FRONTEND V1.9.1
    GitHub Pages + Google Apps Script API
 
    FITUR V1.1 TETAP:
@@ -201,6 +201,7 @@ const compactUI = {
   documentation: { published: [], managed: [], years: [], categories: [], isManager: false, tab: "GALLERY", query: "", category: "ALL", year: "ALL", status: "ALL", page: 1, managePage: 1 },
   fls: { items: [], years: [], isManager: false, tab: "CURRENT", query: "", year: "ALL", status: "ALL", page: 1, managePage: 1 },
   system: { health: null, lastBackup: null },
+  reports: { items: [], sources: [], years: [], permissions: {}, query: "", year: "ALL", status: "ALL", page: 1, detail: null, transactions: [], financeCandidates: [] },
   portalSettings: null
 };
 
@@ -227,7 +228,7 @@ window.addEventListener("appinstalled", () => {
 });
 window.addEventListener("load", () => {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=1.9").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=1.9.1").catch(() => {});
   }
 });
 
@@ -242,7 +243,7 @@ let profilePhotoLoadPromise = null;
    API
 ========================================================= */
 
-const API_CACHE_PREFIX = "kom3_v19_cache_";
+const API_CACHE_PREFIX = "kom3_v191_cache_";
 const API_READ_TTL = {
   dashboard: 30000,
   adminSummary: 20000,
@@ -273,7 +274,9 @@ const API_READ_TTL = {
   certificateSources: 30000,
   listDocumentation: 45000,
   listFlsEvents: 45000,
-  portalHealth: 15000
+  portalHealth: 15000,
+  listActivityReports: 20000,
+  activityReportDetail: 15000
 };
 
 const API_MUTATION_ACTIONS = new Set([
@@ -292,7 +295,8 @@ const API_MUTATION_ACTIONS = new Set([
   "issueCertificates", "setCertificateStatus", "saveCertificateSettings",
   "saveDocumentation", "setDocumentationStatus",
   "saveFlsEvent", "setFlsEventStatus",
-  "createPortalBackup"
+  "createPortalBackup",
+  "saveActivityReport", "setActivityReportStatus", "saveActivityTransaction", "deleteActivityTransaction"
 ]);
 
 const apiMemoryCache = new Map();
@@ -1396,6 +1400,12 @@ async function openAdminCenter() {
         <button type="button" class="admin-action" onclick="openFlsCenter('MANAGE')">
           <span class="admin-action-icon">🏅</span>
           <span><b>FLS</b><small>Info tahunan, juknis, pendaftaran, hasil, dan dokumentasi</small></span>
+          <span>›</span>
+        </button>
+
+        <button type="button" class="admin-action" onclick="openActivityReportCenter()">
+          <span class="admin-action-icon">📑</span>
+          <span><b>Laporan Kegiatan & SPJ</b><small>Proposal, RAB, BKU, SPJ, daftar hadir, dokumentasi, dan paket laporan</small></span>
           <span>›</span>
         </button>
 
@@ -6294,6 +6304,60 @@ async function setFlsStatus(id,status){if(!confirm(`Ubah status FLS menjadi ${fl
 
 
 
+
+/* =========================================================
+   V1.9.1 - LAPORAN KEGIATAN & SPJ
+========================================================= */
+async function openActivityReportCenter(){
+  showLoadingModal("Laporan Kegiatan & SPJ");
+  try{
+    const res=await apiRequest("listActivityReports",{token:sessionToken});
+    if(!res.success){if(res.sessionExpired)forceLogout();throw new Error(res.message||"Laporan kegiatan belum dapat dibuka.");}
+    compactUI.reports.items=res.items||[];compactUI.reports.sources=res.sources||[];compactUI.reports.years=res.years||[];compactUI.reports.permissions=res.permissions||{};
+    compactUI.reports.query="";compactUI.reports.year="ALL";compactUI.reports.status="ALL";compactUI.reports.page=1;renderActivityReportCenter();
+  }catch(err){showToast(err.message);closeModal();}
+}
+function renderActivityReportCenter(){
+  const r=compactUI.reports,q=(r.query||"").toLowerCase();
+  let items=(r.items||[]).filter(x=>(r.year==="ALL"||x.tahunAjaran===r.year)&&(r.status==="ALL"||x.status===r.status)&&(!q||[x.namaKegiatan,x.lokasi,x.penanggungJawab,x.tahunAjaran].join(" ").toLowerCase().includes(q)));
+  const pages=Math.max(1,Math.ceil(items.length/COMPACT_PAGE_SIZE));r.page=Math.min(Math.max(1,r.page||1),pages);const rows=items.slice((r.page-1)*COMPACT_PAGE_SIZE,r.page*COMPACT_PAGE_SIZE);
+  const yearOpts=['<option value="ALL">Semua Tahun</option>'].concat((r.years||[]).map(y=>`<option value="${escapeHtml(y)}" ${r.year===y?'selected':''}>${escapeHtml(y)}</option>`)).join('');
+  setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="closeModal()">×</button>
+  <div class="report-hero"><div>📑</div><section><small>V1.9.1 • PERTANGGUNGJAWABAN KEGIATAN</small><h3>Laporan Kegiatan & SPJ</h3><p>Proposal, RAB, BKU, SPJ, daftar hadir, dokumentasi, dan hasil dalam satu paket.</p></section></div>
+  ${(r.permissions.canManage||r.permissions.canFinance)?`<button class="primary-button" type="button" onclick="openActivityReportEditor('')">＋ BUAT PAKET LAPORAN</button>`:''}
+  <input class="portal-input compact-search" type="search" placeholder="Cari kegiatan, lokasi, penanggung jawab..." value="${escapeHtml(r.query)}" oninput="filterActivityReports(this.value)">
+  <div class="compact-filter-grid"><select class="portal-select full" onchange="setActivityReportYear(this.value)">${yearOpts}</select><select class="portal-select full" onchange="setActivityReportStatusFilter(this.value)"><option value="ALL">Semua Status</option>${['DRAFT','LENGKAP','ARSIP'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+  <div class="compact-list">${rows.length?rows.map(activityReportCardHtml).join(''):`<div class="empty-panel">Belum ada paket laporan kegiatan.</div>`}</div>${compactPagerHtml(r.page,pages,'changeActivityReportPage')}<button class="secondary-button" type="button" onclick="openAdminCenter()">← Kembali ke Admin Center</button>`);
+}
+function activityReportCardHtml(item){const s=item.summary||{},p=Number(s.percent||0);return `<article class="report-card"><div class="report-card-head"><div><small>${escapeHtml(item.tahunAjaran||'-')} • ${escapeHtml(item.sourceType||'KEGIATAN')}</small><strong>${escapeHtml(item.namaKegiatan||'Kegiatan')}</strong><span>📅 ${escapeHtml(item.tanggalMulai||'-')} • 📍 ${escapeHtml(item.lokasi||'-')}</span></div><span class="status-pill ${item.status==='LENGKAP'?'approved':item.status==='ARSIP'?'neutral':'pending'}">${escapeHtml(item.status)}</span></div><div class="report-progress"><div><span>Kelengkapan ${p}%</span><b>${Number(s.done||0)}/${Number(s.total||7)} komponen</b></div><progress max="100" value="${p}"></progress></div><div class="report-summary-grid"><span>RAB <b>${formatRupiah(s.rabPengeluaran||0)}</b></span><span>BKU Keluar <b>${formatRupiah(s.bkuPengeluaran||0)}</b></span><span>Saldo <b>${formatRupiah(s.saldoBku||0)}</b></span></div><button class="archive-open-button" type="button" onclick="openActivityReportDetail('${escapeJs(item.id)}')">Buka Paket Laporan</button></article>`;}
+function filterActivityReports(v){compactUI.reports.query=v||'';compactUI.reports.page=1;renderActivityReportCenter();refocusCompactSearch();}
+function setActivityReportYear(v){compactUI.reports.year=v;compactUI.reports.page=1;renderActivityReportCenter();}
+function setActivityReportStatusFilter(v){compactUI.reports.status=v;compactUI.reports.page=1;renderActivityReportCenter();}
+function changeActivityReportPage(p){compactUI.reports.page=Number(p||1);renderActivityReportCenter();}
+
+function openActivityReportEditor(id){
+  const r=compactUI.reports,item=(r.items||[]).find(x=>x.id===id)||null;
+  const sourceOptions=['<option value="CUSTOM|">Kegiatan Lainnya / Manual</option>'].concat((r.sources||[]).map(s=>`<option value="${escapeHtml(s.type+'|'+s.id)}" ${item&&item.sourceType===s.type&&item.sourceId===s.id?'selected':''}>${escapeHtml(s.sourceLabel+' — '+s.nama+' — '+(s.tanggalMulai||''))}</option>`)).join('');
+  const year=(item&&item.tahunAjaran)||(r.years&&r.years[0])||'';
+  setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="renderActivityReportCenter()">×</button><div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderActivityReportCenter()">←</button><div><h3>${item?'Edit':'Buat'} Paket Laporan</h3><p class="modal-subtitle">Hubungkan dengan Agenda/HBG/FLS agar data tidak diketik berulang.</p></div></div><form id="activityReportForm" class="compact-form" onsubmit="saveActivityReportFromForm(event,'${escapeJs(id)}')"><label class="modal-label">Sumber Kegiatan</label><select id="reportSource" class="portal-select full" onchange="applyActivityReportSource()">${sourceOptions}</select><input id="reportSourceType" type="hidden" value="${escapeHtml(item?item.sourceType:'CUSTOM')}"><input id="reportSourceId" type="hidden" value="${escapeHtml(item?item.sourceId:'')}"><input id="reportAgendaId" type="hidden" value="${escapeHtml(item?item.agendaId:'')}"><label class="modal-label">Nama Kegiatan</label><input id="reportName" class="portal-input" maxlength="180" value="${escapeHtml(item?item.namaKegiatan:'')}" required><div class="form-grid-2"><div><label class="modal-label">Tahun Ajaran</label><select id="reportYear" class="portal-select full">${(r.years||[]).map(y=>`<option value="${escapeHtml(y)}" ${y===year?'selected':''}>${escapeHtml(y)}</option>`).join('')}</select></div><div><label class="modal-label">Status</label>${r.permissions.canManage?`<select id="reportStatus" class="portal-select full">${['DRAFT','LENGKAP','ARSIP'].map(s=>`<option value="${s}" ${item&&item.status===s?'selected':''}>${s}</option>`).join('')}</select>`:`<input id="reportStatus" type="hidden" value="${escapeHtml(item?item.status:'DRAFT')}"><div class="portal-input readonly-field">${escapeHtml(item?item.status:'DRAFT')}</div>`}</div></div><div class="form-grid-2"><div><label class="modal-label">Tanggal Mulai</label><input id="reportStart" class="portal-input" type="date" value="${escapeHtml(item?item.tanggalMulaiInput:'')}"></div><div><label class="modal-label">Tanggal Selesai</label><input id="reportEnd" class="portal-input" type="date" value="${escapeHtml(item?item.tanggalSelesaiInput:'')}"></div></div><label class="modal-label">Lokasi</label><input id="reportLocation" class="portal-input" maxlength="180" value="${escapeHtml(item?item.lokasi:'')}"><label class="modal-label">Penanggung Jawab</label><input id="reportResponsible" class="portal-input" maxlength="150" value="${escapeHtml(item?item.penanggungJawab:'')}"><div class="section-mini-title top-gap">Dokumen / Link Final</div><label class="modal-label">Proposal</label><input id="reportProposal" class="portal-input" type="url" value="${escapeHtml(item?item.proposalUrl:'')}" placeholder="https://..."><div class="form-grid-2"><div><label class="modal-label">RAB Bertandatangan</label><input id="reportRabSigned" class="portal-input" type="url" value="${escapeHtml(item?item.rabSignedUrl:'')}" placeholder="https://..."></div><div><label class="modal-label">BKU Bertandatangan</label><input id="reportBkuSigned" class="portal-input" type="url" value="${escapeHtml(item?item.bkuSignedUrl:'')}" placeholder="https://..."></div></div><label class="modal-label">SPJ Final</label><input id="reportSpj" class="portal-input" type="url" value="${escapeHtml(item?item.spjUrl:'')}" placeholder="https://..."><div class="form-grid-2"><div><label class="modal-label">Daftar Hadir Eksternal</label><input id="reportAttendance" class="portal-input" type="url" value="${escapeHtml(item?item.attendanceUrl:'')}" placeholder="https://..."></div><div><label class="modal-label">Hasil Kegiatan</label><input id="reportResult" class="portal-input" type="url" value="${escapeHtml(item?item.hasilUrl:'')}" placeholder="https://..."></div></div><label class="modal-label">Dokumentasi</label><input id="reportDocumentation" class="portal-input" type="url" value="${escapeHtml(item?item.dokumentasiUrl:'')}" placeholder="https://..."><label class="modal-label">Catatan</label><textarea id="reportNotes" class="portal-textarea" rows="3">${escapeHtml(item?item.catatan:'')}</textarea><button id="reportSaveButton" class="primary-button" type="submit">SIMPAN PAKET LAPORAN</button></form>`);
+  if(!item)applyActivityReportSource();
+}
+function applyActivityReportSource(){const raw=valueOf('reportSource')||'CUSTOM|',parts=raw.split('|'),type=parts[0]||'CUSTOM',id=parts.slice(1).join('|'),s=(compactUI.reports.sources||[]).find(x=>x.type===type&&x.id===id);setValueSafe_('reportSourceType',type);setValueSafe_('reportSourceId',id);setValueSafe_('reportAgendaId',s?s.agendaId||'':'');if(!s)return;setValueSafe_('reportName',s.nama||'');setValueSafe_('reportStart',s.tanggalMulai||'');setValueSafe_('reportEnd',s.tanggalSelesai||'');setValueSafe_('reportLocation',s.lokasi||'');setValueSafe_('reportResponsible',s.penanggungJawab||'');setValueSafe_('reportResult',s.hasilUrl||'');setValueSafe_('reportDocumentation',s.dokumentasiUrl||'');const y=document.getElementById('reportYear');if(y&&s.tahunAjaran)y.value=s.tahunAjaran;}
+function setValueSafe_(id,v){const e=document.getElementById(id);if(e)e.value=v||'';}
+async function saveActivityReportFromForm(event,id){event.preventDefault();setButtonLoading('reportSaveButton',true,'Menyimpan...');try{const res=await apiRequest('saveActivityReport',{token:sessionToken,id,sourceType:valueOf('reportSourceType'),sourceId:valueOf('reportSourceId'),agendaId:valueOf('reportAgendaId'),tahunAjaran:valueOf('reportYear'),namaKegiatan:valueOf('reportName'),tanggalMulai:valueOf('reportStart'),tanggalSelesai:valueOf('reportEnd'),lokasi:valueOf('reportLocation'),penanggungJawab:valueOf('reportResponsible'),proposalUrl:valueOf('reportProposal'),rabSignedUrl:valueOf('reportRabSigned'),bkuSignedUrl:valueOf('reportBkuSigned'),spjUrl:valueOf('reportSpj'),attendanceUrl:valueOf('reportAttendance'),hasilUrl:valueOf('reportResult'),dokumentasiUrl:valueOf('reportDocumentation'),catatan:valueOf('reportNotes'),status:valueOf('reportStatus')});showToast(res.message);if(res.success)await openActivityReportCenter();}catch(e){showToast(e.message);}finally{const b=document.getElementById('reportSaveButton');if(b)setButtonLoading('reportSaveButton',false,'SIMPAN PAKET LAPORAN');}}
+
+async function openActivityReportDetail(id){showLoadingModal('Paket Laporan');try{const res=await apiRequest('activityReportDetail',{token:sessionToken,id});if(!res.success)throw new Error(res.message);compactUI.reports.detail=res.report;compactUI.reports.transactions=res.transactions||[];compactUI.reports.financeCandidates=res.financeCandidates||[];compactUI.reports.permissions=res.permissions||{};compactUI.reports.detail.summary=res.summary||{};renderActivityReportDetail();}catch(e){showToast(e.message);renderActivityReportCenter();}}
+function reportCheckChip(ok,label){return `<span class="report-check ${ok?'ok':'missing'}">${ok?'✓':'!'} ${escapeHtml(label)}</span>`;}
+function renderActivityReportDetail(){const r=compactUI.reports.detail,s=r.summary||{},p=compactUI.reports.permissions||{},c=s.checks||{},tx=compactUI.reports.transactions||[],rab=tx.filter(x=>x.stage==='RAB'),bku=tx.filter(x=>x.stage==='BKU');setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="renderActivityReportCenter()">×</button><div class="compact-detail-header"><button class="compact-back-button" type="button" onclick="renderActivityReportCenter()">←</button><div><h3>${escapeHtml(r.namaKegiatan)}</h3><p class="modal-subtitle">${escapeHtml(r.tahunAjaran)} • ${escapeHtml(r.tanggalMulai||'-')}</p></div></div><div class="report-completeness"><div><strong>${Number(s.percent||0)}%</strong><span>Kelengkapan laporan</span></div><progress max="100" value="${Number(s.percent||0)}"></progress><div class="report-check-grid">${reportCheckChip(c.proposal,'Proposal')}${reportCheckChip(c.rab,'RAB')}${reportCheckChip(c.attendance,'Daftar Hadir')}${reportCheckChip(c.bku,'BKU')}${reportCheckChip(c.spj,'SPJ')}${reportCheckChip(c.documentation,'Dokumentasi')}${reportCheckChip(c.result,'Hasil')}</div></div><div class="report-finance-banner"><span><small>BKU Pemasukan</small><b>${formatRupiah(s.bkuPemasukan||0)}</b></span><span><small>BKU Pengeluaran</small><b>${formatRupiah(s.bkuPengeluaran||0)}</b></span><span><small>Saldo</small><b>${formatRupiah(s.saldoBku||0)}</b></span></div>${(p.canManage||p.canFinance)?`<button class="secondary-button" type="button" onclick="openActivityReportEditor('${escapeJs(r.id)}')">✎ Edit Paket / Link Dokumen</button>`:''}<div class="section-mini-title top-gap">Dokumen Final</div><div class="report-link-grid">${activityReportLinkButton(r.proposalUrl,'📄 Proposal')}${activityReportLinkButton(r.rabSignedUrl,'🧮 RAB Bertandatangan')}${activityReportLinkButton(r.bkuSignedUrl,'📒 BKU Bertandatangan')}${activityReportLinkButton(r.spjUrl,'🧾 SPJ Final')}${activityReportLinkButton(r.attendanceUrl,'👥 Daftar Hadir')}${activityReportLinkButton(r.hasilUrl,'🏆 Hasil')}${activityReportLinkButton(r.dokumentasiUrl,'📸 Dokumentasi')}</div><div class="section-mini-title top-gap">Download dari Portal</div><div class="report-download-grid"><button onclick="downloadActivityReportFile('RAB_XLSX')">📊 RAB Excel</button><button onclick="downloadActivityReportFile('RAB_PDF')">📄 RAB PDF</button><button onclick="downloadActivityReportFile('BKU_XLSX')">📊 BKU Excel</button><button onclick="downloadActivityReportFile('BKU_PDF')">📄 BKU PDF</button><button onclick="downloadActivityReportFile('SPJ_PDF')">🧾 SPJ PDF</button>${r.agendaId?`<button onclick="downloadActivityReportFile('HADIR_XLSX')">👥 Hadir Excel</button><button onclick="downloadActivityReportFile('HADIR_PDF')">👥 Hadir PDF</button>`:''}<button class="package" onclick="downloadActivityReportFile('PACKAGE_ZIP')">📦 Paket Laporan ZIP</button></div>${p.canFinance?`<div class="report-stage-head"><div><strong>RAB</strong><small>${rab.length} rincian</small></div><button class="outline-button" onclick="openActivityTransactionEditor('RAB','')">＋ Tambah RAB</button></div>${activityTransactionListHtml(rab)}<div class="report-stage-head"><div><strong>BKU</strong><small>${bku.length} transaksi • Bukti ${Number(s.proofComplete||0)}/${Number(s.proofRequired||0)}</small></div><button class="outline-button" onclick="openActivityTransactionEditor('BKU','')">＋ Tambah BKU</button></div>${activityTransactionListHtml(bku)}`:`<div class="section-mini-title top-gap">RAB & BKU</div>${activityTransactionListHtml(tx)}`}<button class="secondary-button" type="button" onclick="renderActivityReportCenter()">← Kembali</button>`);}
+function activityReportLinkButton(url,label){return url?`<button type="button" onclick="openExternalLink('${escapeJs(url)}')">${label}</button>`:`<span>${label}<small>Belum tersedia</small></span>`;}
+function activityTransactionListHtml(rows){return `<div class="compact-list">${rows.length?rows.map(x=>`<article class="activity-tx-row"><div><strong>${escapeHtml(x.uraian)}</strong><small>${escapeHtml(x.tanggal||'Rencana')} • ${escapeHtml(x.kategori||'-')} ${x.noBukti?'• Bukti '+escapeHtml(x.noBukti):''}</small><span>${escapeHtml(x.jenis)} • ${formatRupiah(x.nominal)}</span>${x.financeId?`<em>Terhubung Keuangan: ${escapeHtml(x.financeId)}</em>`:''}</div>${compactUI.reports.permissions.canFinance?`<div><button onclick="openActivityTransactionEditor('${escapeJs(x.stage)}','${escapeJs(x.id)}')">✎</button><button onclick="deleteActivityTransaction('${escapeJs(x.id)}')">×</button></div>`:''}</article>`).join(''):`<div class="empty-panel">Belum ada rincian.</div>`}</div>`;}
+function openActivityTransactionEditor(stage,id){const tx=(compactUI.reports.transactions||[]).find(x=>x.id===id)||null,fin=compactUI.reports.financeCandidates||[];setModalHtml(`<div class="modal-handle"></div><button class="modal-close" type="button" onclick="renderActivityReportDetail()">×</button><div class="compact-detail-header"><button class="compact-back-button" onclick="renderActivityReportDetail()">←</button><div><h3>${tx?'Edit':'Tambah'} ${stage}</h3><p class="modal-subtitle">${stage==='BKU'?'Dapat ditarik dari transaksi Keuangan yang sudah ada.':'Rencana anggaran kegiatan.'}</p></div></div><form id="activityTxForm" class="compact-form" onsubmit="saveActivityTransactionFromForm(event,'${escapeJs(stage)}','${escapeJs(id)}')">${stage==='BKU'&&fin.length?`<label class="modal-label">Tarik dari Keuangan <span class="optional-label">opsional</span></label><select id="activityFinanceLink" class="portal-select full" onchange="applyFinanceCandidate()"><option value="">Input manual</option>${fin.map(f=>`<option value="${escapeHtml(f.id)}" ${tx&&tx.financeId===f.id?'selected':''}>${escapeHtml((f.tanggal||'')+' • '+f.jenis+' • '+f.uraian+' • '+formatRupiah(f.nominal))}</option>`).join('')}</select>`:`<input id="activityFinanceLink" type="hidden" value="${escapeHtml(tx?tx.financeId:'')}">`}<div class="form-grid-2"><div><label class="modal-label">Tanggal ${stage==='RAB'?'<span class="optional-label">opsional</span>':''}</label><input id="activityTxDate" class="portal-input" type="date" value="${escapeHtml(tx?tx.tanggalInput:'')}"></div><div><label class="modal-label">Jenis</label><select id="activityTxType" class="portal-select full"><option value="PEMASUKAN" ${tx&&tx.jenis==='PEMASUKAN'?'selected':''}>Penerimaan</option><option value="PENGELUARAN" ${!tx||tx.jenis==='PENGELUARAN'?'selected':''}>Pengeluaran</option></select></div></div><label class="modal-label">Kategori</label><input id="activityTxCategory" class="portal-input" value="${escapeHtml(tx?tx.kategori:'')}" placeholder="Konsumsi / Hadiah / Dana Kegiatan"><label class="modal-label">Uraian</label><input id="activityTxDesc" class="portal-input" value="${escapeHtml(tx?tx.uraian:'')}" required><label class="modal-label">Nominal</label><input id="activityTxAmount" class="portal-input" type="number" min="1" value="${escapeHtml(tx?String(tx.nominal):'')}" required><div class="form-grid-2"><div><label class="modal-label">No. Bukti</label><input id="activityTxReceipt" class="portal-input" value="${escapeHtml(tx?tx.noBukti:'')}"></div><div><label class="modal-label">Link Bukti</label><input id="activityTxProof" class="portal-input" type="url" value="${escapeHtml(tx?tx.buktiUrl:'')}" placeholder="https://..."></div></div><label class="modal-label">Catatan</label><textarea id="activityTxNote" class="portal-textarea" rows="2">${escapeHtml(tx?tx.catatan:'')}</textarea><button id="activityTxSaveButton" class="primary-button" type="submit">SIMPAN ${stage}</button></form>`);}
+function applyFinanceCandidate(){const id=valueOf('activityFinanceLink'),f=(compactUI.reports.financeCandidates||[]).find(x=>x.id===id);if(!f)return;setValueSafe_('activityTxDate',f.tanggal||'');setValueSafe_('activityTxType',f.jenis||'PENGELUARAN');setValueSafe_('activityTxCategory',f.kategori||'');setValueSafe_('activityTxDesc',f.uraian||'');setValueSafe_('activityTxAmount',String(f.nominal||''));setValueSafe_('activityTxProof',f.linkBukti||'');}
+async function saveActivityTransactionFromForm(event,stage,id){event.preventDefault();setButtonLoading('activityTxSaveButton',true,'Menyimpan...');try{const res=await apiRequest('saveActivityTransaction',{token:sessionToken,id,reportId:compactUI.reports.detail.id,stage,financeId:valueOf('activityFinanceLink'),tanggal:valueOf('activityTxDate'),jenis:valueOf('activityTxType'),kategori:valueOf('activityTxCategory'),uraian:valueOf('activityTxDesc'),nominal:Number(valueOf('activityTxAmount')||0),noBukti:valueOf('activityTxReceipt'),buktiUrl:valueOf('activityTxProof'),catatan:valueOf('activityTxNote')});showToast(res.message);if(res.success)await openActivityReportDetail(compactUI.reports.detail.id);}catch(e){showToast(e.message);}finally{const b=document.getElementById('activityTxSaveButton');if(b)setButtonLoading('activityTxSaveButton',false,'SIMPAN '+stage);}}
+async function deleteActivityTransaction(id){if(!confirm('Hapus rincian ini?'))return;try{const res=await apiRequest('deleteActivityTransaction',{token:sessionToken,id});showToast(res.message);if(res.success)await openActivityReportDetail(compactUI.reports.detail.id);}catch(e){showToast(e.message);}}
+async function downloadActivityReportFile(kind){const id=compactUI.reports.detail&&compactUI.reports.detail.id;if(!id)return;showToast('Menyiapkan file...');try{const res=await apiRequest('generateActivityReportFile',{token:sessionToken,id,kind});if(!res.success)throw new Error(res.message);downloadBase64PortalFile_(res.base64,res.mimeType,res.filename);showToast('File siap diunduh.');}catch(e){showToast(e.message);}}
+function downloadBase64PortalFile_(base64,mime,name){const bin=atob(base64),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const url=URL.createObjectURL(new Blob([arr],{type:mime||'application/octet-stream'})),a=document.createElement('a');a.href=url;a.download=name||'download';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);}
+
 /* =========================================================
    V1.9 - SYSTEM HEALTH / BACKUP / PWA
 ========================================================= */
@@ -6374,6 +6438,11 @@ async function openFeature(name) {
 
   if (name === "FLS" || name === "Festival Literasi Sekolah") {
     await openFlsCenter("CURRENT");
+    return;
+  }
+
+  if (name === "Laporan Kegiatan" || name === "Laporan/SPJ") {
+    await openActivityReportCenter();
     return;
   }
 
