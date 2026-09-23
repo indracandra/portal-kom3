@@ -1,5 +1,5 @@
-const CACHE_NAME = "kom3-pwa-v1.9";
-const CORE = ["./", "./index.html", "./style.css?v=1.9", "./app.js?v=1.9", "./assets/logo.jpg", "./manifest.json?v=1.9"];
+const CACHE_NAME = "kom3-pwa-v1.9.1";
+const CORE = ["./", "./index.html", "./style.css?v=1.9.1", "./app.js?v=1.9.1", "./assets/logo.jpg", "./manifest.json?v=1.9.1"];
 self.addEventListener("install", event => { event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(CORE)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", event => { event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith("kom3-pwa-") && k !== CACHE_NAME).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", event => {
